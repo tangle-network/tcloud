@@ -1,0 +1,36 @@
+{
+  "name": "tcloud-agent",
+  "version": "0.1.0",
+  "description": "Private AI agent + Pi extension with operator rotation for Tangle AI Cloud",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "keywords": ["pi-package"],
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "pi": {
+    "extensions": ["./src/pi-extension.ts"]
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/pi-extension.ts --format esm --clean",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "tcloud": "workspace:*"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": ["dist", "src"],
+  "license": "MIT"
+}

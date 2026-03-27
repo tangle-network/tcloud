@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter tcloud dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
