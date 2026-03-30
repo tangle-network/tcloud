@@ -1,13 +1,13 @@
 {
-  "name": "tcloud",
-  "version": "0.1.0",
+  "name": "@tangle-network/tcloud",
+  "version": "0.1.1",
   "description": "TypeScript SDK and CLI for Tangle AI Cloud — decentralized LLM inference",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "tcloud": "./dist/cli.js"
+    "tcloud": "dist/cli.js"
   },
   "exports": {
     ".": {
@@ -60,7 +60,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tangle-network/tcloud-agent.git",
+    "url": "https://github.com/tangle-network/tcloud.git",
     "directory": "packages/tcloud"
   },
   "homepage": "https://docs.tangleai.cloud",
