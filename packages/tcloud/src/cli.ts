@@ -186,8 +186,15 @@ program.command('chat')
         }
         process.stdout.write('\n')
       } else {
-        const response = await client.ask(message, { model })
-        console.log(response)
+        const completion = await client.askFull(message, { model })
+        const text = completion.choices[0]?.message?.content || ''
+        const usedModel = completion.model || model
+        const usage = completion.usage
+        process.stdout.write(`[${usedModel}] ${text}\n`)
+        if (usage) {
+          const cost = usage.total_tokens * 0.000001 // rough estimate
+          process.stdout.write(`  \u21B3 ${usage.total_tokens} tokens \u00B7 $${cost.toFixed(6)}\n`)
+        }
       }
     } catch (e: any) {
       console.error('Error:', e.message)

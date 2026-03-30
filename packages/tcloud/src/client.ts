@@ -201,7 +201,10 @@ export class TCloudClient {
   }
 
   /** Convenience: send a single message and get the text response */
-  async ask(message: string, options?: Partial<ChatOptions>): Promise<string> {
+  async ask(message: string, modelOrOptions?: string | Partial<ChatOptions>): Promise<string> {
+    const options = typeof modelOrOptions === 'string'
+      ? { model: modelOrOptions }
+      : modelOrOptions
     const completion = await this.chat({
       messages: [{ role: 'user', content: message }],
       ...options,
@@ -209,8 +212,22 @@ export class TCloudClient {
     return completion.choices[0]?.message?.content || ''
   }
 
+  /** Convenience: send a single message and get the full completion (with usage) */
+  async askFull(message: string, modelOrOptions?: string | Partial<ChatOptions>): Promise<ChatCompletion> {
+    const options = typeof modelOrOptions === 'string'
+      ? { model: modelOrOptions }
+      : modelOrOptions
+    return this.chat({
+      messages: [{ role: 'user', content: message }],
+      ...options,
+    })
+  }
+
   /** Convenience: stream a single message and yield text chunks */
-  async *askStream(message: string, options?: Partial<ChatOptions>): AsyncGenerator<string> {
+  async *askStream(message: string, modelOrOptions?: string | Partial<ChatOptions>): AsyncGenerator<string> {
+    const options = typeof modelOrOptions === 'string'
+      ? { model: modelOrOptions }
+      : modelOrOptions
     for await (const chunk of this.chatStream({
       messages: [{ role: 'user', content: message }],
       ...options,
@@ -255,6 +272,57 @@ export class TCloudClient {
     }, false)
     if (!res.ok) throw new TCloudError(res.status, 'Failed to add credits')
     return res.json()
+  }
+
+  /** Create a new API key */
+  async createKey(name: string): Promise<{ key: string; id: string }> {
+    const apiRoot = this.baseURL.replace(/\/v1$/, '')
+    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/keys`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({ name }),
+    }, false)
+    if (!res.ok) throw new TCloudError(res.status, 'Failed to create API key')
+    return res.json()
+  }
+
+  /** List API keys */
+  async keys(): Promise<{ id: string; name: string; prefix: string; createdAt: string; lastUsedAt: string | null }[]> {
+    const apiRoot = this.baseURL.replace(/\/v1$/, '')
+    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/keys`, { headers: this.headers }, false)
+    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch keys')
+    return res.json()
+  }
+
+  /** Revoke an API key */
+  async revokeKey(id: string): Promise<void> {
+    const apiRoot = this.baseURL.replace(/\/v1$/, '')
+    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/keys/${id}`, {
+      method: 'DELETE',
+      headers: this.headers,
+    }, false)
+    if (!res.ok) throw new TCloudError(res.status, 'Failed to revoke key')
+  }
+
+  /** Search models by name, provider, or capability */
+  async searchModels(query: string): Promise<Model[]> {
+    const all = await this.models()
+    const q = query.toLowerCase()
+    return all.filter(m =>
+      m.id.toLowerCase().includes(q) ||
+      m.name.toLowerCase().includes(q) ||
+      (m._provider && m._provider.toLowerCase().includes(q))
+    )
+  }
+
+  /** Estimate cost for a request (without sending it) */
+  async estimateCost(options: { model?: string; inputTokens: number; outputTokens: number }): Promise<{ inputCost: number; outputCost: number; total: number }> {
+    const models = await this.models()
+    const model = models.find(m => m.id === (options.model || this.model))
+    if (!model) return { inputCost: 0, outputCost: 0, total: 0 }
+    const inputCost = options.inputTokens * parseFloat(model.pricing.prompt)
+    const outputCost = options.outputTokens * parseFloat(model.pricing.completion)
+    return { inputCost, outputCost, total: inputCost + outputCost }
   }
 }
 
