@@ -62,6 +62,7 @@ async function proxiedFetch(
       throw new Error('socksProxy is required when privacy mode is "socks5"')
     }
     // socks-proxy-agent is an optional peer dependency — install it to use socks5 mode
+    // @ts-ignore — optional peer dependency
     const { SocksProxyAgent } = await import('socks-proxy-agent') as { SocksProxyAgent: new (url: string) => unknown }
     const agent = new SocksProxyAgent(privacy.socksProxy)
     return fetch(url, {
