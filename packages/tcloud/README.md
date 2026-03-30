@@ -48,7 +48,11 @@ npx tcloud chat "What is Tangle?"
 ```ts
 import { TCloud } from 'tcloud'
 
-const client = new TCloud({ apiKey: 'sk-tan-...' })
+// Set model at client creation — explicit and consistent.
+const client = new TCloud({
+  apiKey: 'sk-tan-...',
+  model: 'gpt-4o-mini',
+})
 
 const answer = await client.ask('What is Tangle Network?')
 console.log(answer)
@@ -56,22 +60,27 @@ console.log(answer)
 
 ### Model Selection
 
-Pass a model as the second argument to `ask`, `askStream`, or `askFull`:
+Model is set at client creation. Override per-request when needed:
 
 ```ts
-// Default model (gpt-4o-mini)
-await client.ask('Hello')
+// Default model for all requests
+const client = new TCloud({ apiKey: '...', model: 'gpt-4o-mini' })
+await client.ask('Hello')  // uses gpt-4o-mini
 
-// Override with model string
-await client.ask('Hello', 'claude-sonnet-4-6')
-await client.ask('Hello', 'meta-llama/llama-4-maverick')
+// Full control per-request (OpenAI-compatible)
+const completion = await client.chat({
+  model: 'claude-sonnet-4-6',
+  messages: [{ role: 'user', content: 'Hello' }],
+  temperature: 0.5,
+  maxTokens: 100,
+})
 
-// Override with full options
-await client.ask('Hello', { model: 'gpt-4o', temperature: 0.5 })
-
-// Get full response (with model name, token usage, cost)
-const full = await client.askFull('Hello', 'gpt-4o')
+// Get full response with usage stats
+const full = await client.askFull('Hello')
 console.log(full.model, full.usage?.total_tokens)
+
+// Search available models
+const llamas = await client.searchModels('llama')
 ```
 
 ### Streaming
@@ -294,13 +303,24 @@ const { text } = await generateText({
 
 ## Examples
 
-See the [`examples/`](./examples/) directory:
+See the [`examples/`](./examples/) directory — each is a self-contained script:
 
-- [`basic-chat.ts`](./examples/basic-chat.ts) — Simple chat completion
-- [`streaming.ts`](./examples/streaming.ts) — Streaming responses
-- [`private-inference.ts`](./examples/private-inference.ts) — Anonymous inference with ShieldedCredits
-- [`openai-compat.ts`](./examples/openai-compat.ts) — Using the OpenAI SDK
-- [`vercel-ai.ts`](./examples/vercel-ai.ts) — Using the Vercel AI SDK
+| # | Example | What it shows |
+|---|---------|---------------|
+| 01 | [Quick Start](./examples/01-quick-start.ts) | Minimum viable setup |
+| 02 | [Model Selection](./examples/02-model-selection.ts) | Three ways to pick a model, search, browse |
+| 03 | [Streaming](./examples/03-streaming.ts) | Real-time SSE output, text + chunk modes |
+| 04 | [Private Inference](./examples/04-private-inference.ts) | ShieldedCredits, ephemeral wallets, auto-replenish |
+| 05 | [Operator Routing](./examples/05-operator-routing.ts) | Prefer operator, strategy, region, list operators |
+| 06 | [Cost & Usage](./examples/06-cost-and-usage.ts) | Estimate cost, track tokens, check balance |
+| 07 | [API Keys](./examples/07-api-keys.ts) | Create, list, revoke keys programmatically |
+| 08 | [OpenAI SDK](./examples/08-openai-compat.ts) | Drop-in replacement via baseURL |
+| 09 | [Vercel AI SDK](./examples/09-vercel-ai-sdk.ts) | generateText + streamText with Tangle |
+
+Run any example:
+```bash
+TCLOUD_API_KEY=sk-tan-... npx tsx examples/01-quick-start.ts
+```
 
 ## License
 

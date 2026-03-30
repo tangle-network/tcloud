@@ -1,6 +1,10 @@
 /**
- * tcloud's API is OpenAI-compatible.
- * You can use the OpenAI SDK directly — just point it at Tangle.
+ * OpenAI SDK compatibility — use the OpenAI SDK with Tangle's API.
+ *
+ * The API is OpenAI-compatible, so any tool that works with OpenAI
+ * works with Tangle by changing the base URL.
+ *
+ * Run: npm install openai && TCLOUD_API_KEY=sk-tan-... npx tsx examples/08-openai-compat.ts
  */
 import OpenAI from 'openai'
 

@@ -33,6 +33,7 @@
   },
   "scripts": {
     "build": "tsup src/index.ts src/cli.ts src/shielded.ts --format esm,cjs --dts --clean --external socks-proxy-agent",
+    "docs": "typedoc src/index.ts --out docs --name tcloud --readme README.md",
     "dev": "tsx src/cli.ts",
     "prepublishOnly": "npm run build"
   },
@@ -46,6 +47,7 @@
     "@types/node": "^22.0.0",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",
+    "typedoc": "^0.28.18",
     "typescript": "^5.0.0"
   },
   "files": [
