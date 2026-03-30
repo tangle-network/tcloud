@@ -5,6 +5,7 @@
 
 import type {
   TCloudConfig,
+  PrivacyConfig,
   ChatOptions,
   ChatCompletion,
   ChatCompletionChunk,
@@ -16,17 +17,76 @@ import type {
 
 const DEFAULT_BASE_URL = 'https://api.tangleai.cloud/v1'
 
+/**
+ * Route a fetch call through the configured privacy proxy.
+ * - direct: standard fetch
+ * - relayer: POST to relayer's /relay/proxy or /relay/proxy-stream
+ * - socks5: fetch via SOCKS5 proxy agent (requires socks-proxy-agent peer dep)
+ */
+async function proxiedFetch(
+  privacy: PrivacyConfig | undefined,
+  url: string,
+  init: RequestInit,
+  streaming: boolean,
+): Promise<Response> {
+  if (!privacy || privacy.mode === 'direct') {
+    return fetch(url, init)
+  }
+
+  if (privacy.mode === 'relayer') {
+    if (!privacy.relayerUrl) {
+      throw new Error('relayerUrl is required when privacy mode is "relayer"')
+    }
+    const proxyPath = streaming ? '/relay/proxy-stream' : '/relay/proxy'
+    // Extract headers as plain object for the relay payload
+    const hdrs: Record<string, string> = {}
+    if (init.headers) {
+      const entries = init.headers instanceof Headers
+        ? Array.from(init.headers.entries())
+        : Object.entries(init.headers as Record<string, string>)
+      for (const [k, v] of entries) hdrs[k] = v
+    }
+    return fetch(`${privacy.relayerUrl}${proxyPath}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        target: url,
+        body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body,
+        headers: hdrs,
+      }),
+    })
+  }
+
+  if (privacy.mode === 'socks5') {
+    if (!privacy.socksProxy) {
+      throw new Error('socksProxy is required when privacy mode is "socks5"')
+    }
+    // socks-proxy-agent is an optional peer dependency — install it to use socks5 mode
+    const { SocksProxyAgent } = await import('socks-proxy-agent') as { SocksProxyAgent: new (url: string) => unknown }
+    const agent = new SocksProxyAgent(privacy.socksProxy)
+    return fetch(url, {
+      ...init,
+      // @ts-expect-error agent is supported by Node's undici but not in the standard RequestInit type
+      agent,
+    })
+  }
+
+  return fetch(url, init)
+}
+
 export class TCloudClient {
   readonly baseURL: string
   readonly apiKey?: string
   readonly model: string
   private headers: Record<string, string>
   private spendAuthFn?: () => Promise<SpendAuth>
+  private privacy?: PrivacyConfig
 
   constructor(config: TCloudConfig = {}) {
     this.baseURL = (config.baseURL || DEFAULT_BASE_URL).replace(/\/$/, '')
     this.apiKey = config.apiKey || process.env.TCLOUD_API_KEY || process.env.OPENAI_API_KEY
     this.model = config.model || 'gpt-4o-mini'
+    this.privacy = config.privacy
 
     this.headers = {
       'Content-Type': 'application/json',
@@ -61,7 +121,7 @@ export class TCloudClient {
       delete headers['Authorization'] // don't send API key in private mode
     }
 
-    const res = await fetch(`${this.baseURL}/chat/completions`, {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -77,7 +137,7 @@ export class TCloudClient {
         response_format: options.responseFormat,
         tools: options.tools,
       }),
-    })
+    }, false)
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }))
@@ -97,7 +157,7 @@ export class TCloudClient {
       delete headers['Authorization']
     }
 
-    const res = await fetch(`${this.baseURL}/chat/completions`, {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -109,7 +169,7 @@ export class TCloudClient {
         stop: options.stop,
         top_p: options.topP,
       }),
-    })
+    }, true)
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }))
@@ -161,7 +221,7 @@ export class TCloudClient {
 
   /** List available models */
   async models(): Promise<Model[]> {
-    const res = await fetch(`${this.baseURL}/models`, { headers: this.headers })
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/models`, { headers: this.headers }, false)
     if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch models')
     const data = await res.json()
     return data.data || []
@@ -171,7 +231,7 @@ export class TCloudClient {
   async operators(): Promise<{ operators: Operator[]; stats: any }> {
     // Operators endpoint is at the API root, not /v1
     const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    const res = await fetch(`${apiRoot}/api/operators`, { headers: this.headers })
+    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/operators`, { headers: this.headers }, false)
     if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch operators')
     return res.json()
   }
@@ -179,7 +239,7 @@ export class TCloudClient {
   /** Get credit balance */
   async credits(): Promise<CreditBalance> {
     const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    const res = await fetch(`${apiRoot}/api/billing`, { headers: this.headers })
+    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/billing`, { headers: this.headers }, false)
     if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch credits')
     return res.json()
   }
@@ -187,11 +247,11 @@ export class TCloudClient {
   /** Add credits */
   async addCredits(amount: number): Promise<{ balance: number }> {
     const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    const res = await fetch(`${apiRoot}/api/billing`, {
+    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/billing`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify({ amount }),
-    })
+    }, false)
     if (!res.ok) throw new TCloudError(res.status, 'Failed to add credits')
     return res.json()
   }

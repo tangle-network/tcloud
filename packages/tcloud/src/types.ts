@@ -11,6 +11,8 @@ export interface TCloudConfig {
   routing?: RoutingConfig
   /** Enable shielded (private) mode */
   shielded?: ShieldedConfig | boolean
+  /** Privacy proxy configuration for IP hiding */
+  privacy?: PrivacyConfig
 }
 
 export interface RoutingConfig {
@@ -24,6 +26,18 @@ export interface RoutingConfig {
   fallback?: string[]
 }
 
+export interface PrivacyConfig {
+  /** 'direct' — no proxy (default). 'relayer' — route through tcloud-relayer. 'socks5' — route through SOCKS5 proxy (e.g. Tor). */
+  mode: 'direct' | 'relayer' | 'socks5'
+  /** Relayer URL for 'relayer' mode (e.g. 'http://localhost:3030') */
+  relayerUrl?: string
+  /**
+   * SOCKS5 proxy URL for 'socks5' mode (e.g. 'socks5://127.0.0.1:9050' for Tor).
+   * Requires `socks-proxy-agent` as an optional peer dependency.
+   */
+  socksProxy?: string
+}
+
 export interface ShieldedConfig {
   /** Pre-existing spending private key (hex). If not set, generates ephemeral. */
   spendingKey?: string
@@ -35,6 +49,8 @@ export interface ShieldedConfig {
   creditsAddress?: string
   /** Service ID for the blueprint */
   serviceId?: bigint
+  /** Privacy proxy configuration for IP hiding */
+  privacy?: PrivacyConfig
 }
 
 export interface ChatMessage {

@@ -92,6 +92,7 @@ export { TCloudClient, TCloudError } from './client'
 export { createShieldedClient, generateWallet, signSpendAuth, estimateCost } from './shielded'
 export type {
   TCloudConfig,
+  PrivacyConfig,
   ChatMessage,
   ChatOptions,
   ChatCompletion,

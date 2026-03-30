@@ -1,19 +1,20 @@
 # tcloud
 
-SDK, CLI, and private agent for [Tangle AI Cloud](https://tangleai.cloud) -- decentralized AI inference with optional privacy via ShieldedCredits.
+TypeScript SDK, CLI, agent, and relayer for [Tangle AI Cloud](https://tangleai.cloud) — decentralized LLM inference with operator routing, reputation-based selection, and anonymous payments via ShieldedCredits.
 
 ## Packages
 
-| Package | Description |
-|---------|-------------|
-| [`tcloud`](./packages/tcloud) | SDK + CLI. Drop-in OpenAI replacement with operator routing and x402 shielded payments. |
-| [`tcloud-agent`](./packages/tcloud-agent) | Private AI agent with operator rotation. Pi extension for transparent private inference. |
+| Package | Description | Install |
+|---------|-------------|---------|
+| [`tcloud`](./packages/tcloud/) | SDK + CLI — OpenAI-compatible client with operator routing and x402 payments | `npm install tcloud` |
+| [`tcloud-agent`](./packages/tcloud-agent/) | Private inference agent with operator rotation + Pi extension | — |
+| [`tcloud-relayer`](./packages/tcloud-relayer/) | Gas relay + privacy proxy for shielded payments | — |
 
 ## Quick Start
 
 ```bash
-pnpm install
-pnpm build
+npm install tcloud
+npx tcloud chat "What is Tangle?"
 ```
 
 ### SDK
@@ -21,34 +22,29 @@ pnpm build
 ```ts
 import { TCloud } from 'tcloud'
 
-// Standard mode (API key auth)
 const client = new TCloud({ apiKey: 'sk-tan-...' })
-const response = await client.ask('What is Tangle?')
+const answer = await client.ask('What is Tangle?')
+
+// Streaming
+for await (const chunk of client.askStream('Explain decentralized AI')) {
+  process.stdout.write(chunk)
+}
 
 // Private mode (anonymous, no API key)
 const shielded = TCloud.shielded()
-const answer = await shielded.ask('Hello from the shadows')
+const private_answer = await shielded.ask('Hello from the shadows')
 ```
 
 ### CLI
 
 ```bash
-# Auth
-tcloud auth login          # browser device flow
-tcloud auth set-key sk-... # direct key
-
-# Chat
-tcloud chat "Hello"
-tcloud chat --private "Anonymous hello"
-tcloud chat                # interactive mode
-
-# Models & operators
-tcloud models
-tcloud operators
-
-# Shielded wallet
-tcloud wallet generate
-tcloud credits balance
+tcloud auth set-key sk-tan-...   # authenticate
+tcloud chat "Hello"              # chat
+tcloud chat --private "Anon"     # anonymous inference
+tcloud models                    # list models
+tcloud operators                 # list operators
+tcloud wallet generate           # create shielded wallet
+tcloud credits balance           # check credits
 ```
 
 ### Private Agent
@@ -61,11 +57,38 @@ const agent = new PrivateAgent({
   routing: { strategy: 'min-exposure' },
 })
 await agent.init()
-
 const response = await agent.chat('Hello privately')
-console.log(agent.getPrivacyStats())
+```
+
+## Architecture
+
+```
+tcloud (SDK + CLI)
+  ├── TCloudClient — pure fetch, zero deps, OpenAI-compatible
+  ├── CLI — chat, models, operators, credits, wallet
+  └── ShieldedClient — EIP-712 SpendAuth, auto-replenish, privacy proxy
+
+tcloud-agent
+  ├── PrivateAgent — conversation management, context summarization
+  ├── PrivateRouter — round-robin, random, geo, min-exposure, latency-aware
+  └── Pi extension — tcloud_infer + tcloud_wallet tools
+
+tcloud-relayer
+  ├── /relay/fund-credits — gas relay for shielded deposits
+  ├── /relay/withdraw — gas relay for withdrawals
+  ├── /relay/proxy — privacy proxy (strips identifying headers)
+  └── /relay/proxy-stream — SSE privacy proxy for streaming
+```
+
+## Development
+
+```bash
+pnpm install
+pnpm build            # build all packages
+pnpm dev              # dev mode for SDK/CLI
+pnpm dev:relayer      # dev mode for relayer
 ```
 
 ## License
 
-MIT
+[Apache-2.0](./packages/tcloud/LICENSE)
