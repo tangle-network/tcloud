@@ -9,11 +9,14 @@ Zero framework dependencies. Pure `fetch` + SSE. Works in Node.js, Deno, Bun, an
 - [Installation](#installation)
 - [SDK](#sdk)
   - [Quick Start](#quick-start)
+  - [Model Selection](#model-selection)
   - [Streaming](#streaming)
   - [Full Chat Completion](#full-chat-completion)
   - [Private Inference](#private-inference)
   - [Operator Routing](#operator-routing)
   - [Models and Operators](#models-and-operators)
+  - [API Key Management](#api-key-management)
+  - [Cost Estimation](#cost-estimation)
 - [CLI](#cli)
   - [Authentication](#authentication)
   - [Chat](#chat)
@@ -51,10 +54,35 @@ const answer = await client.ask('What is Tangle Network?')
 console.log(answer)
 ```
 
+### Model Selection
+
+Pass a model as the second argument to `ask`, `askStream`, or `askFull`:
+
+```ts
+// Default model (gpt-4o-mini)
+await client.ask('Hello')
+
+// Override with model string
+await client.ask('Hello', 'claude-sonnet-4-6')
+await client.ask('Hello', 'meta-llama/llama-4-maverick')
+
+// Override with full options
+await client.ask('Hello', { model: 'gpt-4o', temperature: 0.5 })
+
+// Get full response (with model name, token usage, cost)
+const full = await client.askFull('Hello', 'gpt-4o')
+console.log(full.model, full.usage?.total_tokens)
+```
+
 ### Streaming
 
 ```ts
 for await (const chunk of client.askStream('Explain zero-knowledge proofs')) {
+  process.stdout.write(chunk)
+}
+
+// With model override
+for await (const chunk of client.askStream('Hello', 'claude-sonnet-4-6')) {
   process.stdout.write(chunk)
 }
 ```
@@ -121,6 +149,10 @@ The gateway selects the best operator based on a composite score (reputation 40%
 const models = await client.models()
 models.forEach(m => console.log(m.id, m._provider))
 
+// Search models by name, provider, or capability
+const llamas = await client.searchModels('llama')
+const anthropic = await client.searchModels('anthropic')
+
 // List active operators with stats
 const { operators, stats } = await client.operators()
 console.log(`${stats.activeOperators} operators serving ${stats.totalModels} models`)
@@ -128,6 +160,37 @@ console.log(`${stats.activeOperators} operators serving ${stats.totalModels} mod
 // Check credit balance
 const credits = await client.credits()
 console.log(`Balance: $${credits.balance}`)
+```
+
+### API Key Management
+
+Create, list, and revoke API keys programmatically:
+
+```ts
+// Create a new key
+const { key, id } = await client.createKey('my-app')
+console.log(key) // sk-tan-... (shown once, store it)
+
+// List all keys
+const keys = await client.keys()
+keys.forEach(k => console.log(k.name, k.prefix, k.lastUsedAt))
+
+// Revoke a key
+await client.revokeKey(id)
+```
+
+### Cost Estimation
+
+Preview cost before sending a request:
+
+```ts
+const cost = await client.estimateCost({
+  model: 'gpt-4o',
+  inputTokens: 1000,
+  outputTokens: 500,
+})
+console.log(`Estimated: $${cost.total.toFixed(6)}`)
+// { inputCost: 0.005, outputCost: 0.0075, total: 0.0125 }
 ```
 
 ## CLI
