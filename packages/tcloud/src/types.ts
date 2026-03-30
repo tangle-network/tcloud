@@ -13,6 +13,21 @@ export interface TCloudConfig {
   shielded?: ShieldedConfig | boolean
   /** Privacy proxy configuration for IP hiding */
   privacy?: PrivacyConfig
+  /** Spending limits and metering */
+  limits?: SpendingLimits
+}
+
+export interface SpendingLimits {
+  /** Max USD to spend per request. Rejects if estimated cost exceeds this. */
+  maxCostPerRequest?: number
+  /** Max USD to spend across all requests in this client's lifetime. Stops at limit. */
+  maxTotalSpend?: number
+  /** Max requests allowed. Stops at limit. */
+  maxRequests?: number
+  /** Callback when a limit is approached (80% threshold) */
+  onLimitWarning?: (info: { type: 'cost' | 'total' | 'requests'; current: number; limit: number }) => void
+  /** Callback when a limit is hit (request blocked) */
+  onLimitReached?: (info: { type: 'cost' | 'total' | 'requests'; current: number; limit: number }) => void
 }
 
 export interface RoutingConfig {

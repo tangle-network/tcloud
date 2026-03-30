@@ -93,6 +93,7 @@ export { createShieldedClient, generateWallet, signSpendAuth, estimateCost } fro
 export type {
   TCloudConfig,
   PrivacyConfig,
+  SpendingLimits,
   ChatMessage,
   ChatOptions,
   ChatCompletion,

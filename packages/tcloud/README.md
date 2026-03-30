@@ -17,6 +17,7 @@ Zero framework dependencies. Pure `fetch` + SSE. Works in Node.js, Deno, Bun, an
   - [Models and Operators](#models-and-operators)
   - [API Key Management](#api-key-management)
   - [Cost Estimation](#cost-estimation)
+  - [Spending Limits](#spending-limits)
 - [CLI](#cli)
   - [Authentication](#authentication)
   - [Chat](#chat)
@@ -202,6 +203,31 @@ console.log(`Estimated: $${cost.total.toFixed(6)}`)
 // { inputCost: 0.005, outputCost: 0.0075, total: 0.0125 }
 ```
 
+### Spending Limits
+
+Prevent runaway costs with per-request and total budget caps:
+
+```ts
+const client = new TCloud({
+  apiKey: 'sk-tan-...',
+  model: 'gpt-4o-mini',
+  limits: {
+    maxCostPerRequest: 0.01,     // $0.01 max per request
+    maxTotalSpend: 1.00,         // $1.00 lifetime budget
+    maxRequests: 100,            // hard request cap
+    onLimitWarning: (info) => {
+      console.warn(`${info.type} at ${info.current}/${info.limit}`)
+    },
+  },
+})
+
+// Requests that would exceed limits are blocked with TCloudError (429)
+await client.ask('Hello')
+
+// Check metering
+const { totalSpent, requestCount } = client.usage
+```
+
 ## CLI
 
 ### Authentication
@@ -316,6 +342,7 @@ See the [`examples/`](./examples/) directory — each is a self-contained script
 | 07 | [API Keys](./examples/07-api-keys.ts) | Create, list, revoke keys programmatically |
 | 08 | [OpenAI SDK](./examples/08-openai-compat.ts) | Drop-in replacement via baseURL |
 | 09 | [Vercel AI SDK](./examples/09-vercel-ai-sdk.ts) | generateText + streamText with Tangle |
+| 10 | [Spending Limits](./examples/10-spending-limits.ts) | Budget caps, request limits, warning callbacks |
 
 Run any example:
 ```bash

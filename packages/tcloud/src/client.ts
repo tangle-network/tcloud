@@ -6,6 +6,7 @@
 import type {
   TCloudConfig,
   PrivacyConfig,
+  SpendingLimits,
   ChatOptions,
   ChatCompletion,
   ChatCompletionChunk,
@@ -82,12 +83,16 @@ export class TCloudClient {
   private headers: Record<string, string>
   private spendAuthFn?: () => Promise<SpendAuth>
   private privacy?: PrivacyConfig
+  private limits?: SpendingLimits
+  private _totalSpent = 0
+  private _requestCount = 0
 
   constructor(config: TCloudConfig = {}) {
     this.baseURL = (config.baseURL || DEFAULT_BASE_URL).replace(/\/$/, '')
     this.apiKey = config.apiKey || process.env.TCLOUD_API_KEY || process.env.OPENAI_API_KEY
     this.model = config.model || 'gpt-4o-mini'
     this.privacy = config.privacy
+    this.limits = config.limits
 
     this.headers = {
       'Content-Type': 'application/json',
@@ -111,8 +116,59 @@ export class TCloudClient {
     this.spendAuthFn = fn
   }
 
+  /** Current metering stats */
+  get usage() {
+    return {
+      totalSpent: this._totalSpent,
+      requestCount: this._requestCount,
+      limits: this.limits ? { ...this.limits } : undefined,
+    }
+  }
+
+  /** Check spending limits before a request. Throws TCloudError if blocked. */
+  private checkLimits() {
+    if (!this.limits) return
+
+    if (this.limits.maxRequests && this._requestCount >= this.limits.maxRequests) {
+      this.limits.onLimitReached?.({ type: 'requests', current: this._requestCount, limit: this.limits.maxRequests })
+      throw new TCloudError(429, `Request limit reached (${this._requestCount}/${this.limits.maxRequests})`)
+    }
+
+    if (this.limits.maxTotalSpend && this._totalSpent >= this.limits.maxTotalSpend) {
+      this.limits.onLimitReached?.({ type: 'total', current: this._totalSpent, limit: this.limits.maxTotalSpend })
+      throw new TCloudError(429, `Spending limit reached ($${this._totalSpent.toFixed(6)}/$${this.limits.maxTotalSpend})`)
+    }
+
+    // Warn at 80%
+    if (this.limits.maxRequests && this.limits.onLimitWarning) {
+      const pct = this._requestCount / this.limits.maxRequests
+      if (pct >= 0.8) this.limits.onLimitWarning({ type: 'requests', current: this._requestCount, limit: this.limits.maxRequests })
+    }
+    if (this.limits.maxTotalSpend && this.limits.onLimitWarning) {
+      const pct = this._totalSpent / this.limits.maxTotalSpend
+      if (pct >= 0.8) this.limits.onLimitWarning({ type: 'total', current: this._totalSpent, limit: this.limits.maxTotalSpend })
+    }
+  }
+
+  /** Track cost after a response */
+  private trackCost(completion: ChatCompletion) {
+    this._requestCount++
+    if (completion.usage) {
+      // Estimate cost from token counts (rough — actual cost depends on model pricing)
+      const tokens = completion.usage.total_tokens || 0
+      const estimatedCost = tokens * 0.000001 // $1/M tokens fallback
+      this._totalSpent += estimatedCost
+
+      if (this.limits?.maxCostPerRequest && estimatedCost > this.limits.maxCostPerRequest) {
+        this.limits.onLimitReached?.({ type: 'cost', current: estimatedCost, limit: this.limits.maxCostPerRequest })
+      }
+    }
+  }
+
   /** Chat completion (non-streaming) */
   async chat(options: ChatOptions): Promise<ChatCompletion> {
+    this.checkLimits()
+
     const headers = { ...this.headers }
 
     // Attach SpendAuth if in private mode
@@ -142,14 +198,18 @@ export class TCloudClient {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error || err.message || res.statusText)
+      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
     }
 
-    return res.json()
+    const completion: ChatCompletion = await res.json()
+    this.trackCost(completion)
+    return completion
   }
 
   /** Chat completion (streaming) — returns an async iterator of chunks */
   async *chatStream(options: ChatOptions): AsyncGenerator<ChatCompletionChunk> {
+    this.checkLimits()
+
     const headers = { ...this.headers }
 
     if (this.spendAuthFn) {
@@ -192,7 +252,10 @@ export class TCloudClient {
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue
         const data = line.slice(6).trim()
-        if (data === '[DONE]') return
+        if (data === '[DONE]') {
+          this._requestCount++
+          return
+        }
         try {
           yield JSON.parse(data) as ChatCompletionChunk
         } catch {}
