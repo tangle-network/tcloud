@@ -16,7 +16,7 @@ import type {
   SpendAuth,
 } from './types'
 
-const DEFAULT_BASE_URL = 'https://api.tangleai.cloud/v1'
+const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
 
 /**
  * Route a fetch call through the configured privacy proxy.

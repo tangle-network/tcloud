@@ -10,7 +10,7 @@ import { generateText, streamText } from 'ai'
 
 const tangle = createOpenAI({
   apiKey: process.env.TCLOUD_API_KEY,
-  baseURL: 'https://api.tangleai.cloud/v1',
+  baseURL: 'https://router.tangle.tools/v1',
 })
 
 // Non-streaming

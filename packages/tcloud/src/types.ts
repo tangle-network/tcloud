@@ -1,7 +1,7 @@
 /** Core types for the tcloud SDK */
 
 export interface TCloudConfig {
-  /** API base URL (default: https://api.tangleai.cloud/v1) */
+  /** API base URL (default: https://router.tangle.tools/v1) */
   baseURL?: string
   /** API key for standard (non-private) mode */
   apiKey?: string

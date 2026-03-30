@@ -1,6 +1,6 @@
 # tcloud
 
-TypeScript SDK and CLI for [Tangle AI Cloud](https://tangleai.cloud) — decentralized LLM inference with operator routing, reputation-based selection, and anonymous payments via ShieldedCredits.
+TypeScript SDK and CLI for [Tangle AI Cloud](https://router.tangle.tools) — decentralized LLM inference with operator routing, reputation-based selection, and anonymous payments via ShieldedCredits.
 
 Zero framework dependencies. Pure `fetch` + SSE. Works in Node.js, Deno, Bun, and edge runtimes.
 
@@ -281,7 +281,7 @@ Wallets use BIP-39 mnemonics with BIP-44 derivation. Private keys are encrypted 
 Config stored in `~/.tcloud/config.json`:
 
 ```bash
-tcloud config --api-url https://api.tangleai.cloud
+tcloud config --api-url https://router.tangle.tools
 tcloud config --model gpt-4o-mini
 ```
 
@@ -299,7 +299,7 @@ import OpenAI from 'openai'
 
 const client = new OpenAI({
   apiKey: 'sk-tan-...',
-  baseURL: 'https://api.tangleai.cloud/v1',
+  baseURL: 'https://router.tangle.tools/v1',
 })
 
 const completion = await client.chat.completions.create({
@@ -318,7 +318,7 @@ import { generateText } from 'ai'
 
 const tangle = createOpenAI({
   apiKey: 'sk-tan-...',
-  baseURL: 'https://api.tangleai.cloud/v1',
+  baseURL: 'https://router.tangle.tools/v1',
 })
 
 const { text } = await generateText({

@@ -34,7 +34,7 @@ function ensureDir() {
 function loadConfig(): CLIConfig {
   ensureDir()
   if (fs.existsSync(CONFIG_FILE)) return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'))
-  return { apiUrl: 'https://api.tangleai.cloud', defaultModel: 'gpt-4o-mini', chainId: 3799 }
+  return { apiUrl: 'https://router.tangle.tools', defaultModel: 'gpt-4o-mini', chainId: 3799 }
 }
 
 function saveConfig(c: CLIConfig) {
@@ -264,7 +264,7 @@ credits.command('add').description('Add credits').argument('<amount>').action(as
 
 credits.command('fund').description('Fund shielded credits from pool').action(() => {
   console.log('Shielded credit funding requires integration with the VAnchor pool.')
-  console.log('See: https://docs.tangleai.cloud/privacy/funding')
+  console.log('See: https://docs.tangle.tools/privacy/funding')
 })
 
 // ── keys ──
