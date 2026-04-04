@@ -19,6 +19,9 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from '@mariozechner/pi-coding-agent'
+import { Type } from '@sinclair/typebox'
+import { signSpendAuth, generateWallet, type ShieldedWallet } from '@tangle-network/tcloud/shielded'
+import type { Hex } from 'viem'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
@@ -64,19 +67,27 @@ function loadWallet(): WalletData | null {
   } catch { return null }
 }
 
-function buildSpendAuthHeader(wallet: WalletData, nonce: bigint): string {
-  // Build x402 SpendAuth JSON for the X-Payment-Signature header
+const SHIELDED_CHAIN_ID = parseInt(process.env.SHIELDED_CHAIN_ID || '3799')
+const SHIELDED_CREDITS_ADDRESS = (process.env.SHIELDED_CREDITS_ADDRESS || '0x0000000000000000000000000000000000000000') as Hex
+
+async function buildSpendAuthHeader(wallet: WalletData, nonce: bigint): Promise<string> {
   const expiry = BigInt(Math.floor(Date.now() / 1000) + 300)
-  const auth = {
-    commitment: wallet.commitment,
-    serviceId: '1',
-    jobIndex: 0,
-    amount: '1000000', // $1 authorization
-    operator: '0x0000000000000000000000000000000000000000', // gateway selects
-    nonce: nonce.toString(),
-    expiry: expiry.toString(),
-    signature: '0x' + '00'.repeat(65), // TODO: real EIP-712 signing with viem
+  const shieldedWallet: ShieldedWallet = {
+    privateKey: wallet.spendingPrivateKey as Hex,
+    address: wallet.spendingAddress,
+    commitment: wallet.commitment as Hex,
+    salt: wallet.salt as Hex,
   }
+  const auth = await signSpendAuth(shieldedWallet, {
+    serviceId: 1n,
+    jobIndex: 0,
+    amount: 1_000_000n, // $1 authorization in tsUSD base units
+    operator: '0x0000000000000000000000000000000000000000' as Hex, // gateway selects
+    nonce,
+    expiry,
+    chainId: SHIELDED_CHAIN_ID,
+    creditsAddress: SHIELDED_CREDITS_ADDRESS,
+  })
   return JSON.stringify(auth)
 }
 
@@ -110,7 +121,7 @@ export default function tcloudExtension(pi: ExtensionAPI) {
 
     if (session.level === 'shielded' && session.wallet) {
       // x402: sign SpendAuth, no API key, operator can't identify us
-      headers['X-Payment-Signature'] = buildSpendAuthHeader(session.wallet, session.nonce++)
+      headers['X-Payment-Signature'] = await buildSpendAuthHeader(session.wallet, session.nonce++)
     } else if (session.level === 'authenticated' && session.apiKey) {
       headers['Authorization'] = `Bearer ${session.apiKey}`
     }
@@ -166,33 +177,26 @@ export default function tcloudExtension(pi: ExtensionAPI) {
   // The main inference tool — agent calls this instead of using its default provider
   pi.registerTool({
     name: 'tcloud_infer',
+    label: 'Tangle AI Inference',
     description: 'Run inference through Tangle AI Cloud. In shielded mode, uses x402 payments from a funded shielded wallet — operator cannot identify you. In anonymous mode, rate-limited but works immediately.',
-    parameters: {
-      type: 'object',
-      properties: {
-        messages: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              role: { type: 'string', enum: ['system', 'user', 'assistant'] },
-              content: { type: 'string' },
-            },
-          },
-          description: 'Chat messages array',
-        },
-        model: { type: 'string', description: `Model (default: ${TCLOUD_MODEL})` },
-      },
-      required: ['messages'],
-    },
-    handler: async (params: { messages: any[]; model?: string }, ctx: ExtensionContext) => {
+    parameters: Type.Object({
+      messages: Type.Array(
+        Type.Object({
+          role: Type.Union([Type.Literal('system'), Type.Literal('user'), Type.Literal('assistant')]),
+          content: Type.String(),
+        }),
+        { description: 'Chat messages array' }
+      ),
+      model: Type.Optional(Type.String({ description: `Model (default: ${TCLOUD_MODEL})` })),
+    }),
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
       const session = getSession(ctx)
       try {
         const response = await inference(session, params.messages, params.model || TCLOUD_MODEL)
         updateWidget(ctx)
-        return { content: response }
+        return { details: {}, content: [{ type: 'text' as const, text: response }] }
       } catch (e: any) {
-        return { content: e.message, isError: true }
+        return { details: {}, content: [{ type: 'text' as const, text: e.message }], isError: true }
       }
     },
   })
@@ -200,56 +204,55 @@ export default function tcloudExtension(pi: ExtensionAPI) {
   // Wallet + credits management from within Pi
   pi.registerTool({
     name: 'tcloud_wallet',
+    label: 'Tangle Wallet',
     description: 'Manage tcloud shielded wallet. Actions: status, create (generate new ephemeral wallet), fund_url (get URL to fund credits).',
-    parameters: {
-      type: 'object',
-      properties: {
-        action: { type: 'string', enum: ['status', 'create', 'fund_url'] },
-      },
-      required: ['action'],
-    },
-    handler: async (params: { action: string }, ctx: ExtensionContext) => {
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal('status'), Type.Literal('create'), Type.Literal('fund_url')]),
+    }),
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
       const session = getSession(ctx)
 
       if (params.action === 'status') {
         return {
-          content: JSON.stringify({
+          details: {},
+          content: [{ type: 'text' as const, text: JSON.stringify({
             level: session.level,
             wallet: session.wallet ? { commitment: session.wallet.commitment.slice(0, 20) + '...', address: session.wallet.spendingAddress } : null,
             requests: session.totalRequests,
             operators: session.operatorsRotated,
-          }, null, 2),
+          }, null, 2) }],
         }
       }
 
       if (params.action === 'create') {
         ensureDir()
-        const privateKey = '0x' + crypto.randomBytes(32).toString('hex')
-        const salt = '0x' + crypto.randomBytes(32).toString('hex')
-        const address = '0x' + crypto.createHash('sha256').update(privateKey).digest('hex').slice(0, 40)
-        const commitment = '0x' + crypto.createHash('sha256')
-          .update(Buffer.from(address.slice(2) + salt.slice(2), 'hex'))
-          .digest('hex')
-
-        const wallet: WalletData = { spendingPrivateKey: privateKey, spendingAddress: address, commitment, salt }
+        const w = generateWallet()
+        const wallet: WalletData = {
+          spendingPrivateKey: w.privateKey,
+          spendingAddress: w.address,
+          commitment: w.commitment,
+          salt: w.salt,
+        }
         const existing = loadWallet() ? JSON.parse(fs.readFileSync(WALLETS_FILE, 'utf-8')) : []
         existing.push(wallet)
         fs.writeFileSync(WALLETS_FILE, JSON.stringify(existing, null, 2), { mode: 0o600 })
 
         session.wallet = wallet
         session.level = 'shielded'
+        session.nonce = 0n
         updateWidget(ctx)
 
         return {
-          content: `Shielded wallet created.\nCommitment: ${commitment}\nAddress: ${address}\n\nFund it at: ${TCLOUD_API_URL}/privacy-credits`,
+          details: {},
+          content: [{ type: 'text' as const, text: `Shielded wallet created.\nCommitment: ${w.commitment}\nAddress: ${w.address}\n\nFund it at: ${TCLOUD_API_URL}/privacy-credits` }],
         }
       }
 
       if (params.action === 'fund_url') {
-        return { content: `${TCLOUD_API_URL}/privacy-credits` }
+        return { details: {}, content: [{ type: 'text' as const, text: `${TCLOUD_API_URL}/privacy-credits` }] }
       }
 
-      return { content: 'Unknown action', isError: true }
+      return { details: {}, content: [{ type: 'text' as const, text: 'Unknown action' }], isError: true }
     },
   })
 

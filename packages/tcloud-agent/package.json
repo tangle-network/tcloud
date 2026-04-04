@@ -20,7 +20,9 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
-    "tcloud": "workspace:*"
+    "@tangle-network/tcloud": "workspace:*",
+    "@sinclair/typebox": "^0.34.0",
+    "viem": "^2.0.0"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",

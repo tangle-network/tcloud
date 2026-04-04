@@ -16,6 +16,8 @@
  */
 
 import { PrivateRouter, type OperatorInfo, type PrivateRouterConfig } from './private-router'
+import { generateWallet, signSpendAuth, type ShieldedWallet } from '@tangle-network/tcloud/shielded'
+import type { Hex } from 'viem'
 
 export interface PrivateAgentConfig {
   /** Tangle AI Cloud API base URL */
@@ -54,16 +56,17 @@ export class PrivateAgent {
   private conversation: ConversationMessage[] = []
   private turnCount = 0
   private walletRotations = 0
+  private nonce = 0n
 
   constructor(config: PrivateAgentConfig) {
     this.config = {
+      ...config,
       apiUrl: config.apiUrl || 'https://router.tangle.tools/v1',
       model: config.model || 'gpt-4o-mini',
       summaryModel: config.summaryModel || 'gpt-4o-mini',
       chainId: config.chainId || 3799,
       maxTurnsPerWallet: config.maxTurnsPerWallet || 50,
       summarizeOnSwitch: config.summarizeOnSwitch ?? true,
-      ...config,
     }
 
     this.router = new PrivateRouter({
@@ -130,9 +133,26 @@ export class PrivateAgent {
       'Content-Type': 'application/json',
     }
 
-    // In full implementation: sign SpendAuth here with the shielded wallet
-    // For now, use standard auth as placeholder
-    // headers['X-Payment-Signature'] = signSpendAuth(...)
+    if (this.config.wallet) {
+      const w: ShieldedWallet = {
+        privateKey: this.config.wallet.privateKey as Hex,
+        address: '', // derived by signSpendAuth internally
+        commitment: this.config.wallet.commitment as Hex,
+        salt: this.config.wallet.salt as Hex,
+      }
+      const expiry = BigInt(Math.floor(Date.now() / 1000) + 300)
+      const auth = await signSpendAuth(w, {
+        serviceId: 1n,
+        jobIndex: 0,
+        amount: 1_000_000n,
+        operator: (operator?.slug || '0x0000000000000000000000000000000000000000') as Hex,
+        nonce: this.nonce++,
+        expiry,
+        chainId: this.config.chainId || 3799,
+        creditsAddress: (this.config.creditsAddress || '0x0000000000000000000000000000000000000000') as Hex,
+      })
+      headers['X-Payment-Signature'] = JSON.stringify(auth)
+    }
 
     if (operator) {
       headers['X-Tangle-Operator'] = operator.slug
@@ -254,10 +274,16 @@ export class PrivateAgent {
 
   /** Rotate to a new ephemeral wallet (extreme privacy) */
   private async rotateWallet(): Promise<void> {
+    const w = generateWallet()
+    this.config.wallet = {
+      privateKey: w.privateKey,
+      commitment: w.commitment,
+      salt: w.salt,
+    }
     this.walletRotations++
     this.turnCount = 0
-    console.log(`[tcloud-agent] Wallet rotation #${this.walletRotations}`)
-    // In full implementation: generate new wallet, fund from pool
+    this.nonce = 0n
+    console.log(`[tcloud-agent] Wallet rotation #${this.walletRotations}, new commitment: ${w.commitment.slice(0, 18)}...`)
   }
 
   /** Get privacy metrics */
