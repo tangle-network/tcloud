@@ -14,6 +14,12 @@ import type {
   Operator,
   CreditBalance,
   SpendAuth,
+  EmbeddingOptions,
+  EmbeddingResponse,
+  ImageGenerateOptions,
+  ImageResponse,
+  RerankOptions,
+  RerankResponse,
 } from './types'
 
 const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
@@ -96,7 +102,7 @@ export class TCloudClient {
 
     this.headers = {
       'Content-Type': 'application/json',
-      'X-Tangle-Client': 'tcloud-sdk/0.1.0',
+      'X-Tangle-Client': 'tcloud-sdk/0.1.3',
     }
 
     if (this.apiKey) {
@@ -105,6 +111,12 @@ export class TCloudClient {
 
     if (config.routing?.prefer) {
       this.headers['X-Tangle-Operator'] = config.routing.prefer
+    }
+    if (config.routing?.blueprintId) {
+      this.headers['X-Tangle-Blueprint'] = config.routing.blueprintId
+    }
+    if (config.routing?.serviceId) {
+      this.headers['X-Tangle-Service'] = config.routing.serviceId
     }
     if (config.routing?.region) {
       this.headers['X-Tangle-Region'] = config.routing.region
@@ -150,13 +162,21 @@ export class TCloudClient {
     }
   }
 
-  /** Track cost after a response */
-  private trackCost(completion: ChatCompletion) {
+  /** Track cost after a response, using actual pricing from response headers when available */
+  private trackCost(completion: ChatCompletion, res?: Response) {
     this._requestCount++
     if (completion.usage) {
-      // Estimate cost from token counts (rough — actual cost depends on model pricing)
-      const tokens = completion.usage.total_tokens || 0
-      const estimatedCost = tokens * 0.000001 // $1/M tokens fallback
+      let estimatedCost: number
+      const inputPrice = res ? parseFloat(res.headers.get('x-tangle-price-input') || '0') : 0
+      const outputPrice = res ? parseFloat(res.headers.get('x-tangle-price-output') || '0') : 0
+
+      if (inputPrice > 0 || outputPrice > 0) {
+        estimatedCost = (completion.usage.prompt_tokens || 0) * inputPrice
+          + (completion.usage.completion_tokens || 0) * outputPrice
+      } else {
+        const tokens = completion.usage.total_tokens || 0
+        estimatedCost = tokens * 0.000001 // $1/M tokens fallback
+      }
       this._totalSpent += estimatedCost
 
       if (this.limits?.maxCostPerRequest && estimatedCost > this.limits.maxCostPerRequest) {
@@ -202,7 +222,7 @@ export class TCloudClient {
     }
 
     const completion: ChatCompletion = await res.json()
-    this.trackCost(completion)
+    this.trackCost(completion, res)
     return completion
   }
 
@@ -365,6 +385,85 @@ export class TCloudClient {
       headers: this.headers,
     }, false)
     if (!res.ok) throw new TCloudError(res.status, 'Failed to revoke key')
+  }
+
+  /** Generate embeddings */
+  async embeddings(options: EmbeddingOptions): Promise<EmbeddingResponse> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/embeddings`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({
+        model: options.model || 'text-embedding-3-small',
+        input: options.input,
+      }),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    this._requestCount++
+    return res.json()
+  }
+
+  /** Generate images */
+  async imageGenerate(options: ImageGenerateOptions): Promise<ImageResponse> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/images/generations`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({
+        model: options.model || 'dall-e-3',
+        prompt: options.prompt,
+        n: options.n,
+        size: options.size,
+        quality: options.quality,
+        response_format: options.response_format,
+      }),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    this._requestCount++
+    return res.json()
+  }
+
+  /** Rerank documents by relevance to a query */
+  async rerank(options: RerankOptions): Promise<RerankResponse> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/rerank`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({
+        model: options.model || 'rerank-english-v3.0',
+        query: options.query,
+        documents: options.documents,
+        top_n: options.top_n,
+      }),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    this._requestCount++
+    return res.json()
+  }
+
+  /** Text-to-speech */
+  async speech(options: { model?: string; input: string; voice?: string }): Promise<ArrayBuffer> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/audio/speech`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({
+        model: options.model || 'tts-1',
+        input: options.input,
+        voice: options.voice || 'alloy',
+      }),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    this._requestCount++
+    return res.arrayBuffer()
   }
 
   /** Search models by name, provider, or capability */

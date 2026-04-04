@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/tcloud",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "TypeScript SDK and CLI for Tangle AI Cloud — decentralized LLM inference",
   "type": "module",
   "main": "./dist/index.cjs",

@@ -104,5 +104,11 @@ export type {
   SpendAuth,
   RoutingConfig,
   ShieldedConfig,
+  EmbeddingOptions,
+  EmbeddingResponse,
+  ImageGenerateOptions,
+  ImageResponse,
+  RerankOptions,
+  RerankResponse,
 } from './types'
 export type { ShieldedWallet } from './shielded'

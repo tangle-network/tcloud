@@ -31,14 +31,55 @@ export interface SpendingLimits {
 }
 
 export interface RoutingConfig {
-  /** Preferred operator slug */
+  /** Preferred operator slug or address */
   prefer?: string
+  /** Blueprint ID — route to operators under this Blueprint */
+  blueprintId?: string
+  /** Service instance ID — route to a specific service instance */
+  serviceId?: string
   /** Routing strategy */
   strategy?: 'lowest-latency' | 'lowest-price' | 'highest-reputation' | 'round-robin'
   /** Region filter */
   region?: string
   /** Fallback operator slugs (tried in order) */
   fallback?: string[]
+}
+
+export interface EmbeddingOptions {
+  model?: string
+  input: string | string[]
+}
+
+export interface EmbeddingResponse {
+  object: string
+  data: { object: string; embedding: number[]; index: number }[]
+  model: string
+  usage: { prompt_tokens: number; total_tokens: number }
+}
+
+export interface ImageGenerateOptions {
+  model?: string
+  prompt: string
+  n?: number
+  size?: string
+  quality?: string
+  response_format?: 'url' | 'b64_json'
+}
+
+export interface ImageResponse {
+  created: number
+  data: { url?: string; b64_json?: string; revised_prompt?: string }[]
+}
+
+export interface RerankOptions {
+  model?: string
+  query: string
+  documents: string[]
+  top_n?: number
+}
+
+export interface RerankResponse {
+  results: { index: number; relevance_score: number }[]
 }
 
 export interface PrivacyConfig {
