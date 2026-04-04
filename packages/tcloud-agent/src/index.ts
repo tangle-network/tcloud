@@ -5,7 +5,7 @@
  * import { PrivateAgent } from 'tcloud-agent'
  *
  * const agent = new PrivateAgent({
- *   apiUrl: 'https://api.tangleai.cloud',
+ *   apiUrl: 'https://router.tangle.tools/v1',
  *   routing: { strategy: 'min-exposure' },
  * })
  * await agent.init()

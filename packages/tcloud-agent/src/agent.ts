@@ -57,7 +57,7 @@ export class PrivateAgent {
 
   constructor(config: PrivateAgentConfig) {
     this.config = {
-      apiUrl: config.apiUrl || 'https://api.tangleai.cloud',
+      apiUrl: config.apiUrl || 'https://router.tangle.tools/v1',
       model: config.model || 'gpt-4o-mini',
       summaryModel: config.summaryModel || 'gpt-4o-mini',
       chainId: config.chainId || 3799,

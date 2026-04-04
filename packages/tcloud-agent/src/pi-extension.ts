@@ -23,7 +23,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
 
-const TCLOUD_API_URL = process.env.TCLOUD_API_URL || 'https://api.tangleai.cloud'
+const TCLOUD_API_URL = process.env.TCLOUD_API_URL || 'https://router.tangle.tools/v1'
 const TCLOUD_MODEL = process.env.TCLOUD_MODEL || 'gpt-4o-mini'
 const CONFIG_DIR = path.join(process.env.HOME || '~', '.tcloud')
 const WALLETS_FILE = path.join(CONFIG_DIR, 'wallets.json')
