@@ -110,5 +110,14 @@ export type {
   ImageResponse,
   RerankOptions,
   RerankResponse,
+  CompletionOptions,
+  CompletionResponse,
+  TranscriptionResponse,
+  FineTuningJobOptions,
+  FineTuningJob,
+  BatchRequest,
+  BatchJobResponse,
+  VideoGenerateOptions,
+  VideoResponse,
 } from './types'
 export type { ShieldedWallet } from './shielded'

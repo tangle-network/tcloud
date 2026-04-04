@@ -20,6 +20,15 @@ import type {
   ImageResponse,
   RerankOptions,
   RerankResponse,
+  CompletionOptions,
+  CompletionResponse,
+  TranscriptionResponse,
+  FineTuningJobOptions,
+  FineTuningJob,
+  BatchRequest,
+  BatchJobResponse,
+  VideoGenerateOptions,
+  VideoResponse,
 } from './types'
 
 const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
@@ -102,13 +111,16 @@ export class TCloudClient {
 
     this.headers = {
       'Content-Type': 'application/json',
-      'X-Tangle-Client': 'tcloud-sdk/0.1.3',
+      'X-Tangle-Client': 'tcloud-sdk/0.1.4',
     }
 
     if (this.apiKey) {
       this.headers['Authorization'] = `Bearer ${this.apiKey}`
     }
 
+    if (config.routing?.mode) {
+      this.headers['X-Tangle-Routing'] = config.routing.mode
+    }
     if (config.routing?.prefer) {
       this.headers['X-Tangle-Operator'] = config.routing.prefer
     }
@@ -464,6 +476,123 @@ export class TCloudClient {
     }
     this._requestCount++
     return res.arrayBuffer()
+  }
+
+  /** Legacy completions endpoint */
+  async completions(options: CompletionOptions): Promise<CompletionResponse> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/completions`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({
+        model: options.model || this.model,
+        prompt: options.prompt,
+        temperature: options.temperature,
+        max_tokens: options.maxTokens,
+        stop: options.stop,
+        top_p: options.topP,
+      }),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    this._requestCount++
+    return res.json()
+  }
+
+  /** Audio transcription (speech-to-text) */
+  async transcribe(file: Blob, options?: { model?: string; language?: string; prompt?: string }): Promise<TranscriptionResponse> {
+    const formData = new FormData()
+    formData.append('file', file, 'audio.webm')
+    formData.append('model', options?.model || 'whisper-1')
+    if (options?.language) formData.append('language', options.language)
+    if (options?.prompt) formData.append('prompt', options.prompt)
+
+    const headers = { ...this.headers }
+    delete headers['Content-Type'] // let FormData set it
+
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/audio/transcriptions`, {
+      method: 'POST',
+      headers,
+      body: formData as any,
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    this._requestCount++
+    return res.json()
+  }
+
+  /** Create a fine-tuning job */
+  async fineTuneCreate(options: FineTuningJobOptions): Promise<FineTuningJob> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/fine_tuning/jobs`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(options),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    this._requestCount++
+    return res.json()
+  }
+
+  /** List fine-tuning jobs */
+  async fineTuneList(): Promise<{ data: FineTuningJob[] }> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/fine_tuning/jobs`, {
+      headers: this.headers,
+    }, false)
+    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch fine-tuning jobs')
+    return res.json()
+  }
+
+  /** Submit a batch of chat requests */
+  async batch(requests: BatchRequest[]): Promise<BatchJobResponse> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/batch`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({ requests }),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    return res.json()
+  }
+
+  /** Get batch job status */
+  async batchStatus(jobId: string): Promise<BatchJobResponse> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/batch?id=${jobId}`, {
+      headers: this.headers,
+    }, false)
+    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch batch status')
+    return res.json()
+  }
+
+  /** Generate video */
+  async videoGenerate(options: VideoGenerateOptions): Promise<VideoResponse> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/video/generate`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(options),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    this._requestCount++
+    return res.json()
+  }
+
+  /** Get video generation status */
+  async videoStatus(id: string): Promise<VideoResponse> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/video?id=${id}`, {
+      headers: this.headers,
+    }, false)
+    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch video status')
+    return res.json()
   }
 
   /** Search models by name, provider, or capability */

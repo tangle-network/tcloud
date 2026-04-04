@@ -31,6 +31,8 @@ export interface SpendingLimits {
 }
 
 export interface RoutingConfig {
+  /** Routing mode: 'operator' (Tangle operators only), 'provider' (direct APIs only), 'auto' (try operators, fall back to providers) */
+  mode?: 'operator' | 'provider' | 'auto'
   /** Preferred operator slug or address */
   prefer?: string
   /** Blueprint ID — route to operators under this Blueprint */
@@ -80,6 +82,92 @@ export interface RerankOptions {
 
 export interface RerankResponse {
   results: { index: number; relevance_score: number }[]
+}
+
+export interface CompletionOptions {
+  model?: string
+  prompt: string
+  temperature?: number
+  maxTokens?: number
+  stop?: string | string[]
+  topP?: number
+}
+
+export interface CompletionResponse {
+  id: string
+  object: string
+  created: number
+  model: string
+  choices: { text: string; index: number; finish_reason: string }[]
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }
+}
+
+export interface TranscriptionOptions {
+  model?: string
+  /** Audio file as a Blob or File */
+  file: Blob
+  language?: string
+  prompt?: string
+  response_format?: 'json' | 'text' | 'srt' | 'vtt'
+}
+
+export interface TranscriptionResponse {
+  text: string
+}
+
+export interface FineTuningJobOptions {
+  model: string
+  training_file: string
+  hyperparameters?: {
+    n_epochs?: number | 'auto'
+    batch_size?: number | 'auto'
+    learning_rate_multiplier?: number | 'auto'
+  }
+  suffix?: string
+}
+
+export interface FineTuningJob {
+  id: string
+  object: string
+  model: string
+  status: string
+  created_at: number
+  finished_at: number | null
+  fine_tuned_model: string | null
+  error: { code: string; message: string } | null
+}
+
+export interface BatchRequest {
+  model: string
+  messages: ChatMessage[]
+  temperature?: number
+  max_tokens?: number
+}
+
+export interface BatchJobResponse {
+  id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  total_items: number
+  completed: number
+  failed: number
+  results: ({ status: 'fulfilled'; data: ChatCompletion } | { status: 'rejected'; error: string })[] | null
+  error: string | null
+  created_at: string
+  completed_at: string | null
+}
+
+export interface VideoGenerateOptions {
+  model?: string
+  prompt: string
+  duration?: number
+  resolution?: string
+}
+
+export interface VideoResponse {
+  id: string
+  status: string
+  url?: string
+  error?: string
 }
 
 export interface PrivacyConfig {
