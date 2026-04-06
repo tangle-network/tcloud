@@ -595,6 +595,30 @@ export class TCloudClient {
     return res.json()
   }
 
+  /** Generate an avatar video from photo + text/audio */
+  async avatarGenerate(options: { model: string; text?: string; image_url?: string; audio_url?: string }): Promise<VideoResponse> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/avatar`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(options),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    this._requestCount++
+    return res.json()
+  }
+
+  /** Get avatar generation status */
+  async avatarStatus(id: string, model: string): Promise<VideoResponse> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/avatar?id=${id}&model=${model}`, {
+      headers: this.headers,
+    }, false)
+    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch avatar status')
+    return res.json()
+  }
+
   /** Search models by name, provider, or capability */
   async searchModels(query: string): Promise<Model[]> {
     const all = await this.models()
