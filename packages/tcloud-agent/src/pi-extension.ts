@@ -20,11 +20,13 @@
 
 import type { ExtensionAPI, ExtensionContext } from '@mariozechner/pi-coding-agent'
 import { Type } from '@sinclair/typebox'
+import { TCloudClient } from '@tangle-network/tcloud'
 import { signSpendAuth, generateWallet, type ShieldedWallet } from '@tangle-network/tcloud/shielded'
 import type { Hex } from 'viem'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
+import { TangleToolProvider } from './tool-provider'
 
 const TCLOUD_API_URL = process.env.TCLOUD_API_URL || 'https://router.tangle.tools/v1'
 const TCLOUD_MODEL = process.env.TCLOUD_MODEL || 'gpt-4o-mini'
@@ -174,27 +176,59 @@ export default function tcloudExtension(pi: ExtensionAPI) {
 
   // ── Tools ──
 
-  // The main inference tool — agent calls this instead of using its default provider
+  // Build a TCloudClient that inherits the session's auth headers
+  const client = new TCloudClient({
+    baseURL: TCLOUD_API_URL,
+    apiKey: loadConfig().apiKey,
+    model: TCLOUD_MODEL,
+  })
+
+  // Wire up SpendAuth signer if a wallet is available
+  const wallet = loadWallet()
+  if (wallet) {
+    let nonce = 0n
+    client.setSpendAuthSigner(async () => {
+      const expiry = BigInt(Math.floor(Date.now() / 1000) + 300)
+      const w: ShieldedWallet = {
+        privateKey: wallet.spendingPrivateKey as Hex,
+        address: wallet.spendingAddress,
+        commitment: wallet.commitment as Hex,
+        salt: wallet.salt as Hex,
+      }
+      return signSpendAuth(w, {
+        serviceId: 1n,
+        jobIndex: 0,
+        amount: 1_000_000n,
+        operator: '0x0000000000000000000000000000000000000000' as Hex,
+        nonce: nonce++,
+        expiry,
+        chainId: SHIELDED_CHAIN_ID,
+        creditsAddress: SHIELDED_CREDITS_ADDRESS,
+      })
+    })
+  }
+
+  const provider = new TangleToolProvider(client)
+
+  // Single unified tool for all AI capabilities
   pi.registerTool({
-    name: 'tcloud_infer',
-    label: 'Tangle AI Inference',
-    description: 'Run inference through Tangle AI Cloud. In shielded mode, uses x402 payments from a funded shielded wallet — operator cannot identify you. In anonymous mode, rate-limited but works immediately.',
+    name: 'tangle',
+    label: 'Tangle AI Services',
+    description: provider.getToolDefinition().description,
     parameters: Type.Object({
-      messages: Type.Array(
-        Type.Object({
-          role: Type.Union([Type.Literal('system'), Type.Literal('user'), Type.Literal('assistant')]),
-          content: Type.String(),
-        }),
-        { description: 'Chat messages array' }
+      capability: Type.Union(
+        provider.listCapabilities().map(c => Type.Literal(c)),
+        { description: 'Which AI capability to invoke' }
       ),
-      model: Type.Optional(Type.String({ description: `Model (default: ${TCLOUD_MODEL})` })),
+      input: Type.Any({ description: 'Capability-specific parameters' }),
     }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const session = getSession(ctx)
       try {
-        const response = await inference(session, params.messages, params.model || TCLOUD_MODEL)
+        const result = await provider.execute(params.capability, params.input)
+        session.totalRequests++
         updateWidget(ctx)
-        return { details: {}, content: [{ type: 'text' as const, text: response }] }
+        return { details: {}, content: [{ type: 'text' as const, text: JSON.stringify(result.data) }] }
       } catch (e: any) {
         return { details: {}, content: [{ type: 'text' as const, text: e.message }], isError: true }
       }

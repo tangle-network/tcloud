@@ -17,3 +17,4 @@
 
 export { PrivateAgent, type PrivateAgentConfig, type ConversationMessage } from './agent'
 export { PrivateRouter, type PrivateRouterConfig, type OperatorInfo, type RoutingStrategy } from './private-router'
+export { TangleToolProvider, type CapabilityHandler, type ToolResult } from './tool-provider'
