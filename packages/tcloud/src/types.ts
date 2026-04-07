@@ -170,6 +170,43 @@ export interface VideoResponse {
   error?: string
 }
 
+/** Request body for POST /v1/avatar/generate */
+export interface AvatarGenerateRequest {
+  /** URL to narration audio (wav/mp3) */
+  audio_url: string
+  /** URL to face image, OR omit and use avatar_id */
+  image_url?: string
+  /** Preset avatar identifier (provider-specific) */
+  avatar_id?: string
+  /** Target duration in seconds (capped by operator's max_duration_seconds) */
+  duration_seconds?: number
+  /** Output format (default: "mp4") */
+  output_format?: string
+}
+
+/** Response from POST /v1/avatar/generate (202 Accepted) */
+export interface AvatarGenerateResponse {
+  job_id: string
+  status: 'queued' | 'processing' | 'completed' | 'failed'
+  result?: AvatarResult
+  error?: string
+}
+
+/** Result payload within a completed avatar job */
+export interface AvatarResult {
+  video_url: string
+  duration_seconds: number
+  format: string
+}
+
+/** Response from GET /v1/avatar/jobs/:id */
+export interface AvatarJobStatus {
+  job_id: string
+  status: 'queued' | 'processing' | 'completed' | 'failed'
+  result?: AvatarResult
+  error?: string
+}
+
 export interface PrivacyConfig {
   /** 'direct' — no proxy (default). 'relayer' — route through tcloud-relayer. 'socks5' — route through SOCKS5 proxy (e.g. Tor). */
   mode: 'direct' | 'relayer' | 'socks5'

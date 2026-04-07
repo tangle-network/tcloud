@@ -119,5 +119,9 @@ export type {
   BatchJobResponse,
   VideoGenerateOptions,
   VideoResponse,
+  AvatarGenerateRequest,
+  AvatarGenerateResponse,
+  AvatarResult,
+  AvatarJobStatus,
 } from './types'
 export type { ShieldedWallet } from './shielded'

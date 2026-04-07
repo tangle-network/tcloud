@@ -29,6 +29,9 @@ import type {
   BatchJobResponse,
   VideoGenerateOptions,
   VideoResponse,
+  AvatarGenerateRequest,
+  AvatarGenerateResponse,
+  AvatarJobStatus,
 } from './types'
 
 const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
@@ -595,11 +598,22 @@ export class TCloudClient {
     return res.json()
   }
 
-  /** Generate an avatar video from photo + text/audio */
-  async avatarGenerate(options: { model: string; text?: string; image_url?: string; audio_url?: string }): Promise<VideoResponse> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/avatar`, {
+  /** Generate an avatar video (lip-synced talking head from audio + face image).
+   *  Returns 202 with a job_id for async polling via avatarJobStatus(). */
+  async avatarGenerate(options: AvatarGenerateRequest): Promise<AvatarGenerateResponse> {
+    this.checkLimits()
+
+    const headers = { ...this.headers }
+
+    if (this.spendAuthFn) {
+      const auth = await this.spendAuthFn()
+      headers['X-Payment-Signature'] = JSON.stringify(auth)
+      delete headers['Authorization']
+    }
+
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/avatar/generate`, {
       method: 'POST',
-      headers: this.headers,
+      headers,
       body: JSON.stringify(options),
     }, false)
     if (!res.ok) {
@@ -610,13 +624,34 @@ export class TCloudClient {
     return res.json()
   }
 
-  /** Get avatar generation status */
-  async avatarStatus(id: string, model: string): Promise<VideoResponse> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/avatar?id=${id}&model=${model}`, {
+  /** Poll an avatar generation job by ID. */
+  async avatarJobStatus(jobId: string): Promise<AvatarJobStatus> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/avatar/jobs/${jobId}`, {
       headers: this.headers,
     }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch avatar status')
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
     return res.json()
+  }
+
+  /** Poll an avatar job until it reaches a terminal state (completed/failed).
+   *  Returns the final job status. Throws on failure. */
+  async pollAvatarJob(jobId: string, options?: { intervalMs?: number; timeoutMs?: number }): Promise<AvatarJobStatus> {
+    const interval = options?.intervalMs ?? 5000
+    const timeout = options?.timeoutMs ?? 300_000
+    const deadline = Date.now() + timeout
+
+    while (Date.now() < deadline) {
+      const job = await this.avatarJobStatus(jobId)
+      if (job.status === 'completed') return job
+      if (job.status === 'failed') {
+        throw new TCloudError(500, job.error || `Avatar job ${jobId} failed`)
+      }
+      await new Promise(r => setTimeout(r, interval))
+    }
+    throw new TCloudError(408, `Avatar job ${jobId} timed out after ${timeout}ms`)
   }
 
   /** Search models by name, provider, or capability */
