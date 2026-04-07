@@ -654,6 +654,75 @@ export class TCloudClient {
     throw new TCloudError(408, `Avatar job ${jobId} timed out after ${timeout}ms`)
   }
 
+  // ---------------------------------------------------------------------------
+  // Vector Store (requires operator routing — X-Tangle-Service/Blueprint/Operator)
+  // ---------------------------------------------------------------------------
+
+  /** Create a vector collection on the operator's vector store */
+  async createCollection(options: { name: string; dimensions: number; distance_metric?: string }): Promise<any> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/collections`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(options),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    return res.json()
+  }
+
+  /** List collections on the operator's vector store */
+  async listCollections(): Promise<any> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/collections`, {
+      headers: this.headers,
+    }, false)
+    if (!res.ok) throw new TCloudError(res.status, 'Failed to list collections')
+    return res.json()
+  }
+
+  /** Upsert vectors into a collection */
+  async upsertVectors(collection: string, vectors: Array<{ id: string; vector: number[]; metadata?: Record<string, any> }>): Promise<any> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/collections/${encodeURIComponent(collection)}/upsert`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({ vectors }),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    return res.json()
+  }
+
+  /** Similarity search in a collection */
+  async queryVectors(collection: string, options: { vector: number[]; top_k?: number; filter?: Record<string, any> }): Promise<any> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/collections/${encodeURIComponent(collection)}/query`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(options),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    return res.json()
+  }
+
+  /** RAG query — embed text + search collection in one call */
+  async ragQuery(options: { query: string; collection: string; top_k?: number; embedding_model?: string }): Promise<any> {
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/rag`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(options),
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+    }
+    return res.json()
+  }
+
   /** Search models by name, provider, or capability */
   async searchModels(query: string): Promise<Model[]> {
     const all = await this.models()
