@@ -743,6 +743,107 @@ export class TCloudClient {
     const outputCost = options.outputTokens * parseFloat(model.pricing.completion)
     return { inputCost, outputCost, total: inputCost + outputCost }
   }
+
+  /**
+   * Get a pricing spectrum from cheapest to most premium for a given service.
+   * Auto-generates resource configurations along a low→high curve and queries
+   * operators for each. Returns sorted results the customer can pick from.
+   *
+   * @example
+   * ```ts
+   * const spectrum = await client.pricingSpectrum({
+   *   service: 'llm',
+   *   model: 'meta-llama/Llama-3.1-70B-Instruct',
+   *   tiers: 5,  // how many price points (default 5)
+   * })
+   * // Returns:
+   * // [
+   * //   { tier: "basic",    config: { cpu: 4, ram: 16, gpu: 0, tee: false }, price: "$0.001/1K tokens", operators: 12 },
+   * //   { tier: "standard", config: { cpu: 8, ram: 32, gpu: 1, tee: false }, price: "$0.003/1K tokens", operators: 8 },
+   * //   { tier: "premium",  config: { cpu: 16, ram: 64, gpu: 1, tee: true }, price: "$0.005/1K tokens", operators: 3 },
+   * //   ...
+   * // ]
+   * ```
+   */
+  async pricingSpectrum(options: {
+    service?: string
+    model?: string
+    tiers?: number
+  }): Promise<PricingTier[]> {
+    const tiers = options.tiers || 5
+    const operators = await this.operators()
+    const models = await this.models()
+
+    // Build a spectrum of configs from low to high
+    const configs: Array<{ name: string; cpu: number; ram: number; gpu: number; tee: boolean }> = []
+    const steps = [
+      { name: 'basic',       cpu: 2,  ram: 8,   gpu: 0, tee: false },
+      { name: 'standard',    cpu: 4,  ram: 16,  gpu: 0, tee: false },
+      { name: 'gpu',         cpu: 8,  ram: 32,  gpu: 1, tee: false },
+      { name: 'gpu-premium',  cpu: 16, ram: 64,  gpu: 1, tee: false },
+      { name: 'gpu-tee',     cpu: 16, ram: 64,  gpu: 1, tee: true  },
+      { name: 'multi-gpu',   cpu: 32, ram: 128, gpu: 2, tee: false },
+      { name: 'multi-gpu-tee', cpu: 32, ram: 128, gpu: 2, tee: true },
+      { name: 'max',         cpu: 64, ram: 256, gpu: 4, tee: true  },
+    ]
+    // Pick evenly spaced tiers
+    const stride = Math.max(1, Math.floor(steps.length / tiers))
+    for (let i = 0; i < steps.length && configs.length < tiers; i += stride) {
+      configs.push(steps[i])
+    }
+
+    // Query operators for each config
+    const results: PricingTier[] = await Promise.all(
+      configs.map(async (config) => {
+        // Count operators that can serve this config
+        const matching = operators.operators.filter((op: any) => {
+          const gpu = op.capabilities?.gpuCount || 0
+          const tee = op.capabilities?.teeAttested || false
+          if (config.gpu > 0 && gpu < config.gpu) return false
+          if (config.tee && !tee) return false
+          return true
+        })
+
+        // Estimate price from the cheapest matching operator's pricing
+        const model = models.find(m => m.id === (options.model || this.model))
+        let priceEstimate = 'unavailable'
+        if (model && matching.length > 0) {
+          const basePrice = parseFloat(model.pricing.prompt || '0')
+          const multiplier = config.tee ? 1.5 : 1.0
+          const gpuMultiplier = config.gpu > 0 ? (1 + config.gpu * 0.5) : 1.0
+          priceEstimate = `$${(basePrice * multiplier * gpuMultiplier * 1000).toFixed(4)}/1K tokens`
+        }
+
+        return {
+          tier: config.name,
+          config: {
+            cpu: config.cpu,
+            ramGb: config.ram,
+            gpu: config.gpu,
+            tee: config.tee,
+          },
+          priceEstimate,
+          availableOperators: matching.length,
+        }
+      })
+    )
+
+    return results
+  }
+}
+
+export interface PricingTier {
+  tier: string
+  config: { cpu: number; ramGb: number; gpu: number; tee: boolean }
+  priceEstimate: string
+  availableOperators: number
+}
+
+export class TCloudError extends Error {
+  constructor(public status: number, message: string) {
+    super(message)
+    this.name = 'TCloudError'
+  }
 }
 
 export class TCloudError extends Error {
