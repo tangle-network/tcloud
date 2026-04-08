@@ -88,7 +88,7 @@ export class TCloud extends TCloudClient {
 }
 
 // Re-export everything
-export { TCloudClient, TCloudError, type PricingTier } from './client'
+export { TCloudClient, TCloudError, type PricingTier, type TierConfig } from './client'
 export { createShieldedClient, generateWallet, signSpendAuth, estimateCost } from './shielded'
 export type {
   TCloudConfig,

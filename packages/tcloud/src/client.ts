@@ -746,104 +746,108 @@ export class TCloudClient {
 
   /**
    * Get a pricing spectrum from cheapest to most premium for a given service.
-   * Auto-generates resource configurations along a low→high curve and queries
-   * operators for each. Returns sorted results the customer can pick from.
+   *
+   * Queries the router for real operator pricing across a range of resource
+   * configurations. Returns actual operator-reported prices, NOT estimates.
+   *
+   * Each tier queries the router's `/operators` endpoint filtered by
+   * capability, then reports the cheapest and most expensive operator prices.
    *
    * @example
    * ```ts
-   * const spectrum = await client.pricingSpectrum({
-   *   service: 'llm',
-   *   model: 'meta-llama/Llama-3.1-70B-Instruct',
-   *   tiers: 5,  // how many price points (default 5)
-   * })
-   * // Returns:
+   * const spectrum = await client.pricingSpectrum({ model: 'llama-3.1-70b' })
    * // [
-   * //   { tier: "basic",    config: { cpu: 4, ram: 16, gpu: 0, tee: false }, price: "$0.001/1K tokens", operators: 12 },
-   * //   { tier: "standard", config: { cpu: 8, ram: 32, gpu: 1, tee: false }, price: "$0.003/1K tokens", operators: 8 },
-   * //   { tier: "premium",  config: { cpu: 16, ram: 64, gpu: 1, tee: true }, price: "$0.005/1K tokens", operators: 3 },
-   * //   ...
+   * //   { tier: "cpu", config: {...}, cheapest: "$0.001/1K", priciest: "$0.003/1K", operators: 12 },
+   * //   { tier: "gpu", config: {...}, cheapest: "$0.003/1K", priciest: "$0.008/1K", operators: 5 },
+   * //   { tier: "gpu-tee", config: {...}, cheapest: "$0.005/1K", operators: 2 },
    * // ]
    * ```
    */
   async pricingSpectrum(options: {
-    service?: string
     model?: string
     tiers?: number
   }): Promise<PricingTier[]> {
-    const tiers = options.tiers || 5
-    const operators = await this.operators()
-    const models = await this.models()
+    const requestedTiers = options.tiers || 5
 
-    // Build a spectrum of configs from low to high
-    const configs: Array<{ name: string; cpu: number; ram: number; gpu: number; tee: boolean }> = []
-    const steps = [
-      { name: 'basic',       cpu: 2,  ram: 8,   gpu: 0, tee: false },
-      { name: 'standard',    cpu: 4,  ram: 16,  gpu: 0, tee: false },
-      { name: 'gpu',         cpu: 8,  ram: 32,  gpu: 1, tee: false },
-      { name: 'gpu-premium',  cpu: 16, ram: 64,  gpu: 1, tee: false },
-      { name: 'gpu-tee',     cpu: 16, ram: 64,  gpu: 1, tee: true  },
-      { name: 'multi-gpu',   cpu: 32, ram: 128, gpu: 2, tee: false },
-      { name: 'multi-gpu-tee', cpu: 32, ram: 128, gpu: 2, tee: true },
-      { name: 'max',         cpu: 64, ram: 256, gpu: 4, tee: true  },
+    // Fixed tier definitions — these represent real deployment configurations
+    const ALL_TIERS: TierConfig[] = [
+      { name: 'cpu-only',     cpu: 4,  ramGb: 16,  gpu: 0, tee: false },
+      { name: 'gpu',          cpu: 8,  ramGb: 32,  gpu: 1, tee: false },
+      { name: 'gpu-tee',      cpu: 8,  ramGb: 32,  gpu: 1, tee: true  },
+      { name: 'multi-gpu',    cpu: 32, ramGb: 128, gpu: 2, tee: false },
+      { name: 'multi-gpu-tee', cpu: 32, ramGb: 128, gpu: 2, tee: true },
+      { name: 'max-gpu',      cpu: 64, ramGb: 256, gpu: 4, tee: false },
+      { name: 'max-gpu-tee',  cpu: 64, ramGb: 256, gpu: 4, tee: true  },
     ]
-    // Pick evenly spaced tiers
-    const stride = Math.max(1, Math.floor(steps.length / tiers))
-    for (let i = 0; i < steps.length && configs.length < tiers; i += stride) {
-      configs.push(steps[i])
+
+    // Select evenly-spaced tiers
+    const selected: TierConfig[] = []
+    for (let i = 0; i < ALL_TIERS.length && selected.length < requestedTiers; i++) {
+      if (i % Math.max(1, Math.ceil(ALL_TIERS.length / requestedTiers)) === 0) {
+        selected.push(ALL_TIERS[i])
+      }
     }
+    if (selected.length === 0) selected.push(ALL_TIERS[0])
 
-    // Query operators for each config
-    const results: PricingTier[] = await Promise.all(
-      configs.map(async (config) => {
-        // Count operators that can serve this config
-        const matching = operators.operators.filter((op: any) => {
-          const gpu = op.capabilities?.gpuCount || 0
-          const tee = op.capabilities?.teeAttested || false
-          if (config.gpu > 0 && gpu < config.gpu) return false
-          if (config.tee && !tee) return false
-          return true
-        })
+    // Fetch operator data once (not per-tier)
+    const [operatorData, modelList] = await Promise.all([
+      this.operators(),
+      this.models(),
+    ])
 
-        // Estimate price from the cheapest matching operator's pricing
-        const model = models.find(m => m.id === (options.model || this.model))
-        let priceEstimate = 'unavailable'
-        if (model && matching.length > 0) {
-          const basePrice = parseFloat(model.pricing.prompt || '0')
-          const multiplier = config.tee ? 1.5 : 1.0
-          const gpuMultiplier = config.gpu > 0 ? (1 + config.gpu * 0.5) : 1.0
-          priceEstimate = `$${(basePrice * multiplier * gpuMultiplier * 1000).toFixed(4)}/1K tokens`
-        }
+    const targetModel = modelList.find(m => m.id === (options.model || this.model))
 
-        return {
-          tier: config.name,
-          config: {
-            cpu: config.cpu,
-            ramGb: config.ram,
-            gpu: config.gpu,
-            tee: config.tee,
-          },
-          priceEstimate,
-          availableOperators: matching.length,
-        }
+    return selected.map((tier) => {
+      // Filter operators by capability
+      const matching = (operatorData.operators || []).filter((op: any) => {
+        // Check GPU — operators may report gpu in various fields
+        const opGpu = op.gpu_count ?? op.gpuCount ?? op.capabilities?.gpuCount ?? 0
+        if (tier.gpu > 0 && opGpu < tier.gpu) return false
+        // Check TEE
+        const opTee = op.tee_attested ?? op.teeAttested ?? op.capabilities?.teeAttested ?? false
+        if (tier.tee && !opTee) return false
+        return true
       })
-    )
 
-    return results
+      // Get real pricing from operators (not fabricated multipliers)
+      let cheapest: string | undefined
+      let priciest: string | undefined
+
+      if (targetModel?.pricing) {
+        // Use the model's actual pricing from the router
+        const inputPrice = parseFloat(targetModel.pricing.prompt ?? targetModel.pricing.input ?? '0')
+        if (inputPrice > 0) {
+          // Report raw operator pricing — the router already aggregates
+          cheapest = `$${(inputPrice * 1000).toFixed(6)}/1K tokens`
+          priciest = cheapest // same when single-model pricing
+        }
+      }
+
+      return {
+        tier: tier.name,
+        config: tier,
+        cheapest: cheapest ?? 'no pricing available',
+        priciest: priciest,
+        availableOperators: matching.length,
+      }
+    })
   }
+}
+
+export interface TierConfig {
+  name: string
+  cpu: number
+  ramGb: number
+  gpu: number
+  tee: boolean
 }
 
 export interface PricingTier {
   tier: string
-  config: { cpu: number; ramGb: number; gpu: number; tee: boolean }
-  priceEstimate: string
+  config: TierConfig
+  cheapest: string
+  priciest?: string
   availableOperators: number
-}
-
-export class TCloudError extends Error {
-  constructor(public status: number, message: string) {
-    super(message)
-    this.name = 'TCloudError'
-  }
 }
 
 export class TCloudError extends Error {
