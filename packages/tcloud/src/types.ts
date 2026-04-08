@@ -323,6 +323,16 @@ export interface Operator {
   avgLatencyMs: number
   totalRequests: number
   stakeTnt: number
+  /** GPU model name (e.g. "A100", "H100") */
+  gpuModel?: string
+  /** Number of GPUs available */
+  gpuCount?: number
+  /** Total VRAM across all GPUs in MiB */
+  totalVramMib?: number
+  /** Whether this operator is TEE-attested */
+  teeAttested?: boolean
+  /** TEE provider if attested (e.g. "aws_nitro") */
+  teeProvider?: string
   models: { modelId: string; inputPrice: number; outputPrice: number }[]
 }
 

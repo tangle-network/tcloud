@@ -1,268 +1,215 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { TCloudClient } from '../client'
+import { TCloudClient, selectTiers } from '../client'
+import type { TierConfig } from '../client'
 
-// Mock fetch globally
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
 function makeClient() {
-  return new TCloudClient({ baseURL: 'http://test', apiKey: 'test-key' })
+  return new TCloudClient({ baseURL: 'http://test', apiKey: 'test-key', model: 'default-model' })
 }
 
-function mockOperators(operators: any[]) {
-  return { operators, stats: {} }
+function mockOperatorsResponse(operators: any[]) {
+  return { ok: true, json: () => Promise.resolve({ operators, stats: {} }) }
 }
 
-function mockModels(models: any[]) {
-  return models
-}
+describe('selectTiers', () => {
+  const tiers: TierConfig[] = [
+    { name: 'a', cpu: 1, ramGb: 1, gpu: 0, tee: false },
+    { name: 'b', cpu: 2, ramGb: 2, gpu: 1, tee: false },
+    { name: 'c', cpu: 3, ramGb: 3, gpu: 1, tee: true },
+    { name: 'd', cpu: 4, ramGb: 4, gpu: 2, tee: false },
+    { name: 'e', cpu: 5, ramGb: 5, gpu: 2, tee: true },
+    { name: 'f', cpu: 6, ramGb: 6, gpu: 4, tee: false },
+    { name: 'g', cpu: 7, ramGb: 7, gpu: 4, tee: true },
+  ]
+
+  it('returns all items when n >= length', () => {
+    expect(selectTiers(tiers, 7)).toHaveLength(7)
+    expect(selectTiers(tiers, 10)).toHaveLength(7)
+  })
+
+  it('returns first item when n=1', () => {
+    const result = selectTiers(tiers, 1)
+    expect(result).toHaveLength(1)
+    expect(result[0].name).toBe('a')
+  })
+
+  it('returns first and last when n=2', () => {
+    const result = selectTiers(tiers, 2)
+    expect(result).toHaveLength(2)
+    expect(result[0].name).toBe('a')
+    expect(result[1].name).toBe('g')
+  })
+
+  it('always includes first and last when n=3', () => {
+    const result = selectTiers(tiers, 3)
+    expect(result).toHaveLength(3)
+    expect(result[0].name).toBe('a')
+    expect(result[result.length - 1].name).toBe('g')
+  })
+
+  it('produces exactly n items for n=5', () => {
+    const result = selectTiers(tiers, 5)
+    expect(result).toHaveLength(5)
+    expect(result[0].name).toBe('a')
+    expect(result[result.length - 1].name).toBe('g')
+  })
+})
 
 describe('pricingSpectrum', () => {
   beforeEach(() => {
     mockFetch.mockReset()
   })
 
-  it('returns tiers with operator counts', async () => {
+  it('uses per-operator pricing, not model-level pricing', async () => {
     const client = makeClient()
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockOperators([
-          { id: 'op1', gpu_count: 1, tee_attested: false },
-          { id: 'op2', gpu_count: 2, tee_attested: true },
-          { id: 'op3', gpu_count: 0, tee_attested: false },
-        ])),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockModels([
-          { id: 'test-model', pricing: { prompt: '0.000001' } },
-        ])),
-      })
+    mockFetch.mockResolvedValueOnce(mockOperatorsResponse([
+      {
+        id: 'op1', gpuCount: 1,
+        models: [{ modelId: 'default-model', inputPrice: 0.001, outputPrice: 0.002 }],
+      },
+      {
+        id: 'op2', gpuCount: 1,
+        models: [{ modelId: 'default-model', inputPrice: 0.005, outputPrice: 0.010 }],
+      },
+    ]))
 
-    const spectrum = await client.pricingSpectrum({ model: 'test-model', tiers: 3 })
+    const spectrum = await client.pricingSpectrum({ tiers: 2 })
+    const gpuTier = spectrum.find(t => t.config.gpu >= 1 && !t.config.tee)
 
-    expect(spectrum.length).toBeLessThanOrEqual(3)
-    expect(spectrum[0].tier).toBeDefined()
-    expect(spectrum[0].config).toBeDefined()
-    expect(spectrum[0].config.cpu).toBeGreaterThan(0)
-    expect(typeof spectrum[0].availableOperators).toBe('number')
+    // Should have DIFFERENT cheapest vs priciest (op1 vs op2)
+    expect(gpuTier).toBeDefined()
+    expect(gpuTier!.cheapestPrice).toBe(0.001)
+    expect(gpuTier!.priciestPrice).toBe(0.005)
+    expect(gpuTier!.cheapest).not.toBe(gpuTier!.priciest)
+    expect(gpuTier!.operatorsWithModel).toBe(2)
   })
 
-  it('filters operators by GPU requirement', async () => {
+  it('filters operators by GPU count using typed field', async () => {
     const client = makeClient()
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockOperators([
-          { id: 'op1', gpu_count: 0 },
-          { id: 'op2', gpu_count: 1 },
-          { id: 'op3', gpu_count: 4 },
-        ])),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockModels([
-          { id: 'model', pricing: { prompt: '0.001' } },
-        ])),
-      })
+    mockFetch.mockResolvedValueOnce(mockOperatorsResponse([
+      { id: 'op1', gpuCount: 0, models: [{ modelId: 'm', inputPrice: 0.001, outputPrice: 0 }] },
+      { id: 'op2', gpuCount: 1, models: [{ modelId: 'm', inputPrice: 0.002, outputPrice: 0 }] },
+      { id: 'op3', gpuCount: 4, models: [{ modelId: 'm', inputPrice: 0.008, outputPrice: 0 }] },
+    ]))
 
-    const spectrum = await client.pricingSpectrum({ model: 'model', tiers: 7 })
+    const spectrum = await client.pricingSpectrum({ model: 'm', tiers: 7 })
 
-    // cpu-only tier (gpu=0): all 3 operators match
-    const cpuTier = spectrum.find(t => t.config.gpu === 0)
-    expect(cpuTier).toBeDefined()
-    expect(cpuTier!.availableOperators).toBe(3)
+    // cpu-only (gpu=0): all operators pass (no GPU filter when tier.gpu=0)
+    const cpuOnly = spectrum.find(t => t.tier === 'cpu-only')!
+    expect(cpuOnly.availableOperators).toBe(3)
 
-    // gpu tier (gpu=1): op2 + op3 match
-    const gpuTier = spectrum.find(t => t.config.gpu === 1 && !t.config.tee)
-    if (gpuTier) {
-      expect(gpuTier.availableOperators).toBe(2)
-    }
+    // gpu (gpu=1): op2 + op3 match
+    const gpu = spectrum.find(t => t.tier === 'gpu')!
+    expect(gpu.availableOperators).toBe(2)
 
-    // multi-gpu tier (gpu=2): only op3 matches
-    const multiGpu = spectrum.find(t => t.config.gpu === 2)
-    if (multiGpu) {
-      expect(multiGpu.availableOperators).toBe(1)
-    }
+    // multi-gpu (gpu=2): only op3 matches
+    const multiGpu = spectrum.find(t => t.tier === 'multi-gpu')!
+    expect(multiGpu.availableOperators).toBe(1)
 
-    // max-gpu tier (gpu=4): only op3 matches
-    const maxGpu = spectrum.find(t => t.config.gpu === 4 && !t.config.tee)
-    if (maxGpu) {
-      expect(maxGpu.availableOperators).toBe(1)
-    }
+    // max-gpu (gpu=4): only op3 matches
+    const maxGpu = spectrum.find(t => t.tier === 'max-gpu')!
+    expect(maxGpu.availableOperators).toBe(1)
   })
 
-  it('filters operators by TEE requirement', async () => {
+  it('filters operators by TEE using typed field', async () => {
     const client = makeClient()
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockOperators([
-          { id: 'op1', gpu_count: 2, tee_attested: false },
-          { id: 'op2', gpu_count: 2, tee_attested: true },
-        ])),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockModels([
-          { id: 'model', pricing: { prompt: '0.001' } },
-        ])),
-      })
+    mockFetch.mockResolvedValueOnce(mockOperatorsResponse([
+      { id: 'op1', gpuCount: 2, teeAttested: false, models: [{ modelId: 'm', inputPrice: 0.003, outputPrice: 0 }] },
+      { id: 'op2', gpuCount: 2, teeAttested: true, models: [{ modelId: 'm', inputPrice: 0.005, outputPrice: 0 }] },
+    ]))
 
-    const spectrum = await client.pricingSpectrum({ model: 'model', tiers: 7 })
+    const spectrum = await client.pricingSpectrum({ model: 'm', tiers: 7 })
 
-    // Non-TEE tiers: both operators
-    const nonTee = spectrum.find(t => t.config.gpu > 0 && !t.config.tee)
-    if (nonTee) {
-      expect(nonTee.availableOperators).toBe(2)
-    }
+    const nonTee = spectrum.find(t => t.tier === 'multi-gpu')!
+    expect(nonTee.availableOperators).toBe(2)
 
-    // TEE tiers: only op2
-    const teeTier = spectrum.find(t => t.config.tee)
-    if (teeTier) {
-      expect(teeTier.availableOperators).toBe(1)
-    }
+    const tee = spectrum.find(t => t.tier === 'multi-gpu-tee')!
+    expect(tee.availableOperators).toBe(1)
+    expect(tee.cheapestPrice).toBe(0.005)
   })
 
-  it('handles no operators gracefully', async () => {
+  it('returns "no operators" when none match', async () => {
     const client = makeClient()
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockOperators([])),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockModels([])),
-      })
+    mockFetch.mockResolvedValueOnce(mockOperatorsResponse([]))
 
     const spectrum = await client.pricingSpectrum({ tiers: 3 })
 
-    expect(spectrum.length).toBeGreaterThan(0)
     spectrum.forEach(tier => {
       expect(tier.availableOperators).toBe(0)
-      expect(tier.cheapest).toBe('no pricing available')
+      expect(tier.operatorsWithModel).toBe(0)
+      expect(tier.cheapest).toBe('no operators for this config')
+      expect(tier.cheapestPrice).toBeUndefined()
     })
   })
 
-  it('handles missing model pricing gracefully', async () => {
+  it('excludes operators that do not serve the requested model', async () => {
     const client = makeClient()
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockOperators([{ id: 'op1', gpu_count: 1 }])),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockModels([
-          { id: 'other-model', pricing: { prompt: '0.001' } },
-        ])),
-      })
+    mockFetch.mockResolvedValueOnce(mockOperatorsResponse([
+      { id: 'op1', gpuCount: 1, models: [{ modelId: 'llama', inputPrice: 0.001, outputPrice: 0 }] },
+      { id: 'op2', gpuCount: 1, models: [{ modelId: 'qwen', inputPrice: 0.002, outputPrice: 0 }] },
+    ]))
 
-    // Request model that doesn't exist
-    const spectrum = await client.pricingSpectrum({ model: 'nonexistent', tiers: 2 })
+    const spectrum = await client.pricingSpectrum({ model: 'llama', tiers: 2 })
+    const gpuTier = spectrum.find(t => t.config.gpu >= 1)
 
-    spectrum.forEach(tier => {
-      expect(tier.cheapest).toBe('no pricing available')
-    })
+    // Both operators match GPU requirements, but only op1 serves 'llama'
+    expect(gpuTier!.availableOperators).toBe(2)
+    expect(gpuTier!.operatorsWithModel).toBe(1)
+    expect(gpuTier!.cheapestPrice).toBe(0.001)
+    expect(gpuTier!.priciestPrice).toBeUndefined() // only one price point
   })
 
-  it('respects tiers parameter', async () => {
+  it('clamps tiers to valid range', async () => {
     const client = makeClient()
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockOperators([])),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockModels([])),
-      })
+    mockFetch.mockResolvedValueOnce(mockOperatorsResponse([]))
 
-    const spectrum = await client.pricingSpectrum({ tiers: 2 })
-    expect(spectrum.length).toBeLessThanOrEqual(2)
+    const spectrum0 = await client.pricingSpectrum({ tiers: 0 })
+    expect(spectrum0.length).toBe(1)
+
+    mockFetch.mockResolvedValueOnce(mockOperatorsResponse([]))
+    const spectrum100 = await client.pricingSpectrum({ tiers: 100 })
+    expect(spectrum100.length).toBe(7) // capped at ALL_TIERS.length
   })
 
-  it('defaults to 5 tiers', async () => {
+  it('makes exactly 1 API call', async () => {
     const client = makeClient()
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockOperators([])),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockModels([])),
-      })
+    mockFetch.mockResolvedValueOnce(mockOperatorsResponse([]))
 
-    const spectrum = await client.pricingSpectrum({})
-    expect(spectrum.length).toBeLessThanOrEqual(5)
-    expect(spectrum.length).toBeGreaterThan(0)
+    await client.pricingSpectrum({ tiers: 3 })
+
+    // Only fetches operators — no separate models() call needed
+    expect(mockFetch).toHaveBeenCalledTimes(1)
   })
 
-  it('makes exactly 2 API calls (operators + models)', async () => {
+  it('sorts prices ascending (cheapest first)', async () => {
     const client = makeClient()
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockOperators([])),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockModels([])),
-      })
+    mockFetch.mockResolvedValueOnce(mockOperatorsResponse([
+      { id: 'expensive', gpuCount: 1, models: [{ modelId: 'm', inputPrice: 0.999, outputPrice: 0 }] },
+      { id: 'cheap', gpuCount: 1, models: [{ modelId: 'm', inputPrice: 0.001, outputPrice: 0 }] },
+      { id: 'mid', gpuCount: 1, models: [{ modelId: 'm', inputPrice: 0.050, outputPrice: 0 }] },
+    ]))
 
-    await client.pricingSpectrum({ tiers: 5 })
+    const spectrum = await client.pricingSpectrum({ model: 'm', tiers: 2 })
+    const gpuTier = spectrum.find(t => t.config.gpu >= 1)!
 
-    // Should fetch operators and models in parallel — exactly 2 calls
-    expect(mockFetch).toHaveBeenCalledTimes(2)
+    expect(gpuTier.cheapestPrice).toBe(0.001)
+    expect(gpuTier.priciestPrice).toBe(0.999)
   })
 
-  it('tier configs increase monotonically in resources', async () => {
+  it('omits priciestPrice when all operators have same price', async () => {
     const client = makeClient()
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockOperators([])),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockModels([])),
-      })
+    mockFetch.mockResolvedValueOnce(mockOperatorsResponse([
+      { id: 'op1', gpuCount: 1, models: [{ modelId: 'm', inputPrice: 0.005, outputPrice: 0 }] },
+      { id: 'op2', gpuCount: 1, models: [{ modelId: 'm', inputPrice: 0.005, outputPrice: 0 }] },
+    ]))
 
-    const spectrum = await client.pricingSpectrum({ tiers: 7 })
+    const spectrum = await client.pricingSpectrum({ model: 'm', tiers: 2 })
+    const gpuTier = spectrum.find(t => t.config.gpu >= 1)!
 
-    for (let i = 1; i < spectrum.length; i++) {
-      const prev = spectrum[i - 1].config
-      const curr = spectrum[i].config
-      // Each tier should have >= resources of the previous
-      expect(curr.cpu).toBeGreaterThanOrEqual(prev.cpu)
-    }
-  })
-
-  it('handles operator response with varying field names', async () => {
-    const client = makeClient()
-    mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockOperators([
-          // Different field naming conventions from different router versions
-          { id: 'op1', gpuCount: 2, teeAttested: true },
-          { id: 'op2', capabilities: { gpuCount: 1, teeAttested: false } },
-          { id: 'op3', gpu_count: 3 },
-        ])),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockModels([
-          { id: 'model', pricing: { prompt: '0.001' } },
-        ])),
-      })
-
-    const spectrum = await client.pricingSpectrum({ model: 'model', tiers: 3 })
-
-    // Should handle all naming conventions without crashing
-    expect(spectrum.length).toBeGreaterThan(0)
+    expect(gpuTier.cheapestPrice).toBe(0.005)
+    expect(gpuTier.priciestPrice).toBeUndefined()
+    expect(gpuTier.priciest).toBeUndefined()
   })
 })
