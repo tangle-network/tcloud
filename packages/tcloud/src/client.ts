@@ -35,6 +35,7 @@ import type {
   JobEvent,
   WatchJobOptions,
 } from './types'
+import { PrivateRouter, type OperatorInfo } from './private-router'
 
 const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
 
@@ -106,10 +107,14 @@ export class TCloudClient {
   private limits?: SpendingLimits
   private _totalSpent = 0
   private _requestCount = 0
+  readonly privateRouter?: PrivateRouter
+  private _cachedOperators: OperatorInfo[] = []
+  private _operatorsCachedAt = 0
+  private static readonly OPERATORS_TTL_MS = 5 * 60 * 1000
 
   constructor(config: TCloudConfig = {}) {
     this.baseURL = (config.baseURL || DEFAULT_BASE_URL).replace(/\/$/, '')
-    this.apiKey = config.apiKey || process.env.TCLOUD_API_KEY || process.env.OPENAI_API_KEY
+    this.apiKey = config.apiKey || process.env.TCLOUD_API_KEY
     this.model = config.model || 'gpt-4o-mini'
     this.privacy = config.privacy
     this.limits = config.limits
@@ -137,6 +142,18 @@ export class TCloudClient {
     }
     if (config.routing?.region) {
       this.headers['X-Tangle-Region'] = config.routing.region
+    }
+
+    if (config.routing?.strategy) {
+      const strategyMap: Record<string, import('./private-router').RoutingStrategy> = {
+        'round-robin': 'round-robin',
+        'lowest-latency': 'latency-aware',
+        'lowest-price': 'round-robin',
+        'highest-reputation': 'round-robin',
+      }
+      this.privateRouter = new PrivateRouter({
+        strategy: strategyMap[config.routing.strategy] || 'round-robin',
+      })
     }
   }
 
@@ -179,6 +196,26 @@ export class TCloudClient {
     }
   }
 
+  /** Ensure the private router has operators loaded (with TTL-based caching) */
+  private async ensureRouterOperators(): Promise<void> {
+    if (!this.privateRouter) return
+    const now = Date.now()
+    if (this._cachedOperators.length > 0 && (now - this._operatorsCachedAt) < TCloudClient.OPERATORS_TTL_MS) {
+      return
+    }
+    const data = await this.operators()
+    this._cachedOperators = (data.operators || []).map((op: Operator) => ({
+      slug: op.slug,
+      endpointUrl: op.endpointUrl,
+      region: '',
+      reputationScore: op.reputationScore,
+      avgLatencyMs: op.avgLatencyMs,
+      models: op.models.map((m) => m.modelId),
+    }))
+    this._operatorsCachedAt = now
+    this.privateRouter.setOperators(this._cachedOperators)
+  }
+
   /** Track cost after a response, using actual pricing from response headers when available */
   private trackCost(completion: ChatCompletion, res?: Response) {
     this._requestCount++
@@ -215,7 +252,21 @@ export class TCloudClient {
       delete headers['Authorization'] // don't send API key in private mode
     }
 
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/chat/completions`, {
+    // Use private router to select operator and override base URL
+    let requestBaseURL = this.baseURL
+    if (this.privateRouter) {
+      await this.ensureRouterOperators()
+      const model = options.model || this.model
+      const operator = this.privateRouter.selectOperator(model)
+      if (operator) {
+        requestBaseURL = operator.endpointUrl.replace(/\/$/, '')
+        headers['X-Tangle-Operator'] = operator.slug
+        // Don't leak API key to operator — operator authenticates via X-Tangle-Operator
+        delete headers['Authorization']
+      }
+    }
+
+    const res = await proxiedFetch(this.privacy, `${requestBaseURL}/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -246,6 +297,7 @@ export class TCloudClient {
   /** Chat completion (streaming) — returns an async iterator of chunks */
   async *chatStream(options: ChatOptions): AsyncGenerator<ChatCompletionChunk> {
     this.checkLimits()
+    this._requestCount++
 
     const headers = { ...this.headers }
 
@@ -255,7 +307,21 @@ export class TCloudClient {
       delete headers['Authorization']
     }
 
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/chat/completions`, {
+    // Use private router to select operator and override base URL
+    let requestBaseURL = this.baseURL
+    if (this.privateRouter) {
+      await this.ensureRouterOperators()
+      const model = options.model || this.model
+      const operator = this.privateRouter.selectOperator(model)
+      if (operator) {
+        requestBaseURL = operator.endpointUrl.replace(/\/$/, '')
+        headers['X-Tangle-Operator'] = operator.slug
+        // Don't leak API key to operator — operator authenticates via X-Tangle-Operator
+        delete headers['Authorization']
+      }
+    }
+
+    const res = await proxiedFetch(this.privacy, `${requestBaseURL}/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -282,6 +348,7 @@ export class TCloudClient {
       const { done, value } = await reader.read()
       if (done) break
       buf += decoder.decode(value, { stream: true })
+      if (buf.length > 1_048_576) throw new TCloudError(502, 'SSE buffer overflow — server sent >1MB without newline')
 
       const lines = buf.split('\n')
       buf = lines.pop() || ''
@@ -290,7 +357,6 @@ export class TCloudClient {
         if (!line.startsWith('data: ')) continue
         const data = line.slice(6).trim()
         if (data === '[DONE]') {
-          this._requestCount++
           return
         }
         try {
@@ -673,11 +739,22 @@ export class TCloudClient {
     const timer = setTimeout(() => controller.abort(), timeout)
 
     try {
+      const watchHeaders: Record<string, string> = {
+        ...this.headers,
+        Accept: 'text/event-stream',
+      }
+      // When connecting to an operator URL, don't leak the API key.
+      // The job ID itself is the capability token for operator auth.
+      if (options?.operatorUrl) {
+        delete watchHeaders['Authorization']
+      }
+      // SSE token overrides any existing Authorization header
+      if (options?.sseToken) {
+        watchHeaders['Authorization'] = `Bearer ${options.sseToken}`
+      }
+
       const res = await proxiedFetch(this.privacy, url, {
-        headers: {
-          ...this.headers,
-          Accept: 'text/event-stream',
-        },
+        headers: watchHeaders,
         signal: controller.signal,
       }, true)
 
@@ -697,6 +774,7 @@ export class TCloudClient {
           throw new TCloudError(502, `SSE stream ended without terminal event for job ${jobId}`)
         }
         buf += decoder.decode(value, { stream: true })
+        if (buf.length > 1_048_576) throw new TCloudError(502, 'SSE buffer overflow — server sent >1MB without newline')
 
         const lines = buf.split('\n')
         buf = lines.pop() || ''
@@ -713,7 +791,11 @@ export class TCloudClient {
             continue
           }
 
-          options?.onEvent?.(event)
+          try {
+            options?.onEvent?.(event)
+          } catch (cbErr) {
+            console.error('watchJob onEvent callback error:', cbErr)
+          }
 
           if (terminalStatuses.has(event.status)) {
             return event

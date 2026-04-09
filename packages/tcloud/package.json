@@ -29,10 +29,22 @@
         "types": "./dist/shielded.d.cts",
         "default": "./dist/shielded.cjs"
       }
+    },
+    "./instance": {
+      "node": {
+        "import": {
+          "types": "./dist/instance.d.ts",
+          "default": "./dist/instance.js"
+        },
+        "require": {
+          "types": "./dist/instance.d.cts",
+          "default": "./dist/instance.cjs"
+        }
+      }
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts src/cli.ts src/shielded.ts --format esm,cjs --dts --clean --external socks-proxy-agent",
+    "build": "tsup src/index.ts src/cli.ts src/shielded.ts src/instance.ts --format esm,cjs --dts --clean --external socks-proxy-agent",
     "docs": "typedoc src/index.ts --out docs --name tcloud --readme README.md",
     "test": "vitest run",
     "dev": "tsx src/cli.ts",
