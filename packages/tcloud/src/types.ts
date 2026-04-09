@@ -347,6 +347,27 @@ export interface CreditBalance {
   }[]
 }
 
+/** Status event from an async job SSE stream */
+export interface JobEvent {
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled'
+  progress?: number
+  result?: Record<string, unknown>
+  error?: string
+  timestamp: number
+}
+
+/** Options for watchJob() */
+export interface WatchJobOptions {
+  /** Operator endpoint URL (if not using default routing) */
+  operatorUrl?: string
+  /** Callback for each event (useful for progress tracking) */
+  onEvent?: (event: JobEvent) => void
+  /** Timeout in ms (default: 5 minutes) */
+  timeout?: number
+  /** Model to route to (for operator discovery) */
+  model?: string
+}
+
 export interface SpendAuth {
   commitment: string
   serviceId: string

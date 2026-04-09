@@ -32,6 +32,8 @@ import type {
   AvatarGenerateRequest,
   AvatarGenerateResponse,
   AvatarJobStatus,
+  JobEvent,
+  WatchJobOptions,
 } from './types'
 
 const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
@@ -652,6 +654,80 @@ export class TCloudClient {
       await new Promise(r => setTimeout(r, interval))
     }
     throw new TCloudError(408, `Avatar job ${jobId} timed out after ${timeout}ms`)
+  }
+
+  /**
+   * Watch an async job via SSE until it reaches a terminal state.
+   * Works with avatar, video, and training blueprint operators.
+   *
+   * @param jobId - The job ID returned by the creation endpoint
+   * @param options - Optional: operatorUrl override, onEvent callback
+   * @returns The final JobEvent (completed/failed/cancelled)
+   */
+  async watchJob(jobId: string, options?: WatchJobOptions): Promise<JobEvent> {
+    const base = options?.operatorUrl?.replace(/\/$/, '') || this.baseURL
+    const url = `${base}/v1/jobs/${encodeURIComponent(jobId)}/events`
+    const timeout = options?.timeout ?? 300_000
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout)
+
+    try {
+      const res = await proxiedFetch(this.privacy, url, {
+        headers: {
+          ...this.headers,
+          Accept: 'text/event-stream',
+        },
+        signal: controller.signal,
+      }, true)
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }))
+        throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+      }
+
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      const terminalStatuses = new Set(['completed', 'failed', 'cancelled'])
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+          throw new TCloudError(502, `SSE stream ended without terminal event for job ${jobId}`)
+        }
+        buf += decoder.decode(value, { stream: true })
+
+        const lines = buf.split('\n')
+        buf = lines.pop() || ''
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6).trim()
+          if (!data || data === '[DONE]') continue
+
+          let event: JobEvent
+          try {
+            event = JSON.parse(data) as JobEvent
+          } catch {
+            continue
+          }
+
+          options?.onEvent?.(event)
+
+          if (terminalStatuses.has(event.status)) {
+            return event
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        throw new TCloudError(408, `Job ${jobId} timed out after ${timeout}ms`)
+      }
+      throw err
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   // ---------------------------------------------------------------------------
