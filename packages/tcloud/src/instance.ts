@@ -33,6 +33,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { TCloudClient } from './client'
 import type { TCloudConfig } from './types'
 
@@ -62,6 +63,23 @@ export interface InstanceConfig {
   blueprints: string[]
 }
 
+const MAX_LOG_LINES = 10_000
+
+/**
+ * Append a line to a bounded log buffer, evicting the oldest entry once the
+ * buffer exceeds `maxLines`. Exported for unit testing.
+ */
+export function appendLogLine(
+  buffer: string[],
+  line: string,
+  maxLines: number = MAX_LOG_LINES,
+): void {
+  buffer.push(line)
+  if (buffer.length > maxLines) {
+    buffer.shift()
+  }
+}
+
 /**
  * A running Tangle dev environment. Hold one per test file or dev session.
  */
@@ -69,12 +87,17 @@ export class Instance {
   private child: ChildProcess
   private _config: InstanceConfig
   private _stopped = false
-  private logBuffer: string[] = []
-  private readonly maxLogLines = 10_000
+  private logBuffer: string[]
+  private readonly maxLogLines = MAX_LOG_LINES
 
-  private constructor(child: ChildProcess, config: InstanceConfig) {
+  private constructor(
+    child: ChildProcess,
+    config: InstanceConfig,
+    logBuffer: string[],
+  ) {
     this.child = child
     this._config = config
+    this.logBuffer = logBuffer
   }
 
   /**
@@ -105,14 +128,13 @@ export class Instance {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
+    // Single, persistent log buffer. The Instance returned at the end of
+    // start() inherits this same reference — no second listener is attached
+    // post-startup, so lines are recorded exactly once.
     const logBuffer: string[] = []
-    const maxLines = 10_000
 
     const pushLog = (line: string) => {
-      logBuffer.push(line)
-      if (logBuffer.length > maxLines) {
-        logBuffer.shift()
-      }
+      appendLogLine(logBuffer, line, MAX_LOG_LINES)
       if (!options.quiet) {
         process.stdout.write(line + '\n')
       }
@@ -138,7 +160,42 @@ export class Instance {
 
     try {
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
+        let settled = false
+        let timer: ReturnType<typeof setTimeout> | undefined
+        let pollInterval: ReturnType<typeof setInterval> | undefined
+
+        // Single cleanup path called from every settle branch (resolve,
+        // timeout, exit, error). Clears both timers and both listeners so
+        // nothing leaks once the promise is done.
+        const cleanup = () => {
+          if (settled) return
+          settled = true
+          if (pollInterval !== undefined) clearInterval(pollInterval)
+          if (timer !== undefined) clearTimeout(timer)
+          child.removeListener('exit', onExit)
+          child.removeListener('error', onError)
+        }
+
+        const onExit = (code: number | null) => {
+          if (settled) return
+          cleanup()
+          reject(
+            new Error(
+              `cargo tangle harness exited with code ${code} before becoming ready. ` +
+                `Last 20 lines:\n${logBuffer.slice(-20).join('\n')}`,
+            ),
+          )
+        }
+
+        const onError = (err: Error) => {
+          if (settled) return
+          cleanup()
+          reject(new Error(`Failed to spawn ${cargoBinary}: ${err.message}`))
+        }
+
+        timer = setTimeout(() => {
+          if (settled) return
+          cleanup()
           reject(
             new Error(
               `Timed out after ${timeoutMs}ms waiting for harness to start. ` +
@@ -147,29 +204,16 @@ export class Instance {
           )
         }, timeoutMs)
 
-        const onExit = (code: number | null) => {
-          clearTimeout(timer)
-          reject(
-            new Error(
-              `cargo tangle harness exited with code ${code} before becoming ready. ` +
-                `Last 20 lines:\n${logBuffer.slice(-20).join('\n')}`,
-            ),
-          )
-        }
         child.once('exit', onExit)
-        child.once('error', (err) => {
-          clearTimeout(timer)
-          reject(new Error(`Failed to spawn ${cargoBinary}: ${err.message}`))
-        })
+        child.once('error', onError)
 
         // Poll the logBuffer for the "Harness up" marker
-        const pollInterval = setInterval(() => {
+        pollInterval = setInterval(() => {
           for (const line of logBuffer) {
             const match = line.match(/Harness up\.\s+(\d+)\s+blueprint/i)
             if (match) {
-              clearInterval(pollInterval)
-              clearTimeout(timer)
-              child.removeListener('exit', onExit)
+              if (settled) return
+              cleanup()
               resolve()
               return
             }
@@ -188,24 +232,13 @@ export class Instance {
       throw err
     }
 
-    const instance = new Instance(child, {
-      routerUrl,
-      blueprints: blueprintNames,
-    })
-    instance.logBuffer = logBuffer
-
-    // Continue streaming logs into the instance buffer after startup
-    child.stdout?.on('data', (chunk: Buffer) => {
-      const lines = chunk.toString().split('\n').filter(Boolean)
-      for (const line of lines) {
-        instance.logBuffer.push(line)
-        if (instance.logBuffer.length > instance.maxLogLines) {
-          instance.logBuffer.shift()
-        }
-      }
-    })
-
-    return instance
+    // Instance shares the same logBuffer reference the stdout/stderr
+    // listeners already write to — no new listeners needed.
+    return new Instance(
+      child,
+      { routerUrl, blueprints: blueprintNames },
+      logBuffer,
+    )
   }
 
   /** URL of the router serving this instance */
@@ -236,6 +269,9 @@ export class Instance {
 
   /** Whether the harness process is still running */
   get isRunning(): boolean {
+    // _stopped is checked first: after stop() sends SIGTERM the child's
+    // exitCode stays null until the 'exit' event fires, so relying on
+    // exitCode alone would briefly report a stopped instance as running.
     return !this._stopped && !this.child.killed && this.child.exitCode === null
   }
 
@@ -280,7 +316,12 @@ export function writeTempHarnessConfig(blueprints: Array<{
   port?: number
   env?: Record<string, string>
 }>): string {
-  const dir = join(tmpdir(), `tangle-harness-${process.pid}-${Date.now()}`)
+  // PID + Date.now() collides if the same process calls this twice within
+  // the same millisecond. randomUUID() guarantees uniqueness.
+  const dir = join(
+    tmpdir(),
+    `tangle-harness-${process.pid}-${Date.now()}-${randomUUID()}`,
+  )
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true })
   }
