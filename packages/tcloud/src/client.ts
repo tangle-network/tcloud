@@ -739,7 +739,10 @@ export class TCloudClient {
     const timer = setTimeout(() => controller.abort(), timeout)
 
     try {
-      const watchHeaders = { ...this.headers, Accept: 'text/event-stream' }
+      const watchHeaders: Record<string, string> = {
+        ...this.headers,
+        Accept: 'text/event-stream',
+      }
       // When connecting to an operator URL, don't leak the API key.
       // The job ID itself is the capability token for operator auth.
       if (options?.operatorUrl) {
