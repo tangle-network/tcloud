@@ -187,6 +187,52 @@ describe('watchJob', () => {
     expect(result.status).toBe('completed')
   })
 
+  it('sets Authorization header when sseToken is provided', async () => {
+    const events: JobEvent[] = [
+      { status: 'completed', timestamp: 1 },
+    ]
+    const stream = makeSSEStream([sseChunk(events)])
+    const mockFn = mockFetch(stream)
+    globalThis.fetch = mockFn
+
+    const client = new TCloudClient({ model: 'test' })
+    await client.watchJob('job-token', {
+      operatorUrl: 'https://operator.example.com',
+      sseToken: 'my-sse-token',
+    })
+
+    const callHeaders = mockFn.mock.calls[0][1].headers
+    expect(callHeaders['Authorization']).toBe('Bearer my-sse-token')
+  })
+
+  it('continues processing when onEvent callback throws', async () => {
+    const events: JobEvent[] = [
+      { status: 'queued', timestamp: 1 },
+      { status: 'completed', timestamp: 2 },
+    ]
+    const stream = makeSSEStream([sseChunk(events)])
+    globalThis.fetch = mockFetch(stream)
+
+    const onEvent = vi.fn().mockImplementationOnce(() => {
+      throw new Error('callback exploded')
+    })
+    const client = new TCloudClient({ model: 'test' })
+    const result = await client.watchJob('job-throw-cb', { onEvent })
+
+    expect(result.status).toBe('completed')
+    expect(onEvent).toHaveBeenCalledTimes(2)
+  })
+
+  it('throws on SSE buffer overflow (>1MB without newline)', async () => {
+    // Create a single chunk larger than 1MB with no newline
+    const bigChunk = new Uint8Array(1_048_577).fill(65) // 'A' repeated
+    const stream = makeSSEStream([bigChunk])
+    globalThis.fetch = mockFetch(stream)
+
+    const client = new TCloudClient({ model: 'test' })
+    await expect(client.watchJob('job-overflow')).rejects.toThrow(/SSE buffer overflow/)
+  })
+
   it('skips [DONE] sentinel', async () => {
     const raw = [
       'data: {"status":"completed","timestamp":1}\n\n',
