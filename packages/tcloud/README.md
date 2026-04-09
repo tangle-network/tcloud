@@ -13,6 +13,9 @@ Zero framework dependencies. Pure `fetch` + SSE. Works in Node.js, Deno, Bun, an
   - [Streaming](#streaming)
   - [Full Chat Completion](#full-chat-completion)
   - [Private Inference](#private-inference)
+  - [Embeddings](#embeddings)
+  - [Video & Avatar Generation](#video--avatar-generation)
+  - [Async Jobs](#async-jobs)
   - [Operator Routing](#operator-routing)
   - [Models and Operators](#models-and-operators)
   - [API Key Management](#api-key-management)
@@ -55,7 +58,7 @@ const client = new TCloud({
   model: 'gpt-4o-mini',
 })
 
-const answer = await client.ask('What is Tangle Network?')
+const answer = await client.ask('What is Tangle Network?') // string
 console.log(answer)
 ```
 
@@ -66,7 +69,7 @@ Model is set at client creation. Override per-request when needed:
 ```ts
 // Default model for all requests
 const client = new TCloud({ apiKey: '...', model: 'gpt-4o-mini' })
-await client.ask('Hello')  // uses gpt-4o-mini
+await client.ask('Hello')  // returns string
 
 // Full control per-request (OpenAI-compatible)
 const completion = await client.chat({
@@ -74,14 +77,14 @@ const completion = await client.chat({
   messages: [{ role: 'user', content: 'Hello' }],
   temperature: 0.5,
   maxTokens: 100,
-})
+}) // returns ChatCompletion { id, model, choices: [{ index, message, finish_reason }], usage? }
 
 // Get full response with usage stats
-const full = await client.askFull('Hello')
+const full = await client.askFull('Hello') // returns ChatCompletion
 console.log(full.model, full.usage?.total_tokens)
 
 // Search available models
-const llamas = await client.searchModels('llama')
+const llamas = await client.searchModels('llama') // returns Model[]
 ```
 
 ### Streaming
@@ -110,9 +113,10 @@ const completion = await client.chat({
   ],
   temperature: 0.7,
   maxTokens: 1024,
-})
+}) // returns ChatCompletion
 
 console.log(completion.choices[0].message.content)
+// completion.usage => { prompt_tokens, completion_tokens, total_tokens }
 ```
 
 ### Private Inference
@@ -127,6 +131,57 @@ const answer = await client.ask('Hello from the shadows')
 ```
 
 Under the hood: generates an ephemeral wallet, signs a SpendAuth payload, and sends it as an `X-Payment-Signature` header. The operator validates the cryptographic proof and serves inference without knowing who you are.
+
+### Embeddings
+
+```ts
+const response = await client.embeddings({
+  model: 'text-embedding-3-small',
+  input: 'What is Tangle?',
+}) // returns EmbeddingResponse
+// EmbeddingResponse: { object, data: [{ object, embedding: number[], index }], model, usage }
+console.log(response.data[0].embedding.length) // 1536
+```
+
+### Video & Avatar Generation
+
+```ts
+// Generate a video from a text prompt
+const video = await client.videoGenerate({
+  prompt: 'A sunset over mountains',
+  duration: 5,
+}) // returns VideoResponse { id, status, url?, error? }
+
+// Generate a talking-head avatar video
+const avatar = await client.avatarGenerate({
+  audio_url: 'https://example.com/narration.mp3',
+  image_url: 'https://example.com/face.jpg',
+}) // returns AvatarGenerateResponse { job_id, status, result?, error? }
+```
+
+### Async Jobs
+
+Avatar and video generation are asynchronous. Use `watchJob()` for real-time SSE streaming of job progress, or poll with `avatarJobStatus()`.
+
+```ts
+// Submit an avatar job
+const job = await client.avatarGenerate({
+  audio_url: 'https://...',
+  image_url: 'https://...',
+})
+console.log(job.job_id) // 'job-abc123'
+console.log(job.status) // 'queued'
+
+// Watch until complete (SSE streaming)
+const result = await client.watchJob(job.job_id, {
+  onEvent: (e) => console.log(`${e.status} ${e.progress ?? ''}%`),
+}) // returns JobEvent { status, progress?, result?, error?, timestamp }
+console.log(result.result) // { video_url: 'https://...' }
+
+// Or just poll
+const status = await client.avatarJobStatus(job.job_id)
+// returns AvatarJobStatus { job_id, status, result?, error? }
+```
 
 ### Operator Routing
 
@@ -156,19 +211,23 @@ The gateway selects the best operator based on a composite score (reputation 40%
 
 ```ts
 // List all available models
-const models = await client.models()
+const models = await client.models() // returns Model[]
+// Model: { id, name, context_length, pricing: { prompt, completion }, _provider? }
 models.forEach(m => console.log(m.id, m._provider))
 
 // Search models by name, provider, or capability
-const llamas = await client.searchModels('llama')
+const llamas = await client.searchModels('llama') // returns Model[]
 const anthropic = await client.searchModels('anthropic')
 
 // List active operators with stats
 const { operators, stats } = await client.operators()
+// returns { operators: Operator[], stats: any }
+// Operator: { id, slug, name, status, endpointUrl, reputationScore, avgLatencyMs, models, ... }
 console.log(`${stats.activeOperators} operators serving ${stats.totalModels} models`)
 
 // Check credit balance
-const credits = await client.credits()
+const credits = await client.credits() // returns CreditBalance
+// CreditBalance: { balance: number, transactions: [{ id, amount, type, description, createdAt }] }
 console.log(`Balance: $${credits.balance}`)
 ```
 
@@ -198,7 +257,7 @@ const cost = await client.estimateCost({
   model: 'gpt-4o',
   inputTokens: 1000,
   outputTokens: 500,
-})
+}) // returns { inputCost: number, outputCost: number, total: number }
 console.log(`Estimated: $${cost.total.toFixed(6)}`)
 // { inputCost: 0.005, outputCost: 0.0075, total: 0.0125 }
 ```

@@ -127,3 +127,4 @@ export type {
   WatchJobOptions,
 } from './types'
 export type { ShieldedWallet } from './shielded'
+export { PrivateRouter, type PrivateRouterConfig, type RoutingStrategy, type OperatorInfo } from './private-router'

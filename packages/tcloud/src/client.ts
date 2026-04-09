@@ -35,6 +35,7 @@ import type {
   JobEvent,
   WatchJobOptions,
 } from './types'
+import { PrivateRouter } from './private-router'
 
 const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
 
@@ -106,6 +107,7 @@ export class TCloudClient {
   private limits?: SpendingLimits
   private _totalSpent = 0
   private _requestCount = 0
+  readonly privateRouter?: PrivateRouter
 
   constructor(config: TCloudConfig = {}) {
     this.baseURL = (config.baseURL || DEFAULT_BASE_URL).replace(/\/$/, '')
@@ -137,6 +139,18 @@ export class TCloudClient {
     }
     if (config.routing?.region) {
       this.headers['X-Tangle-Region'] = config.routing.region
+    }
+
+    if (config.routing?.strategy) {
+      const strategyMap: Record<string, import('./private-router').RoutingStrategy> = {
+        'round-robin': 'round-robin',
+        'lowest-latency': 'latency-aware',
+        'lowest-price': 'round-robin',
+        'highest-reputation': 'round-robin',
+      }
+      this.privateRouter = new PrivateRouter({
+        strategy: strategyMap[config.routing.strategy] || 'round-robin',
+      })
     }
   }
 
@@ -215,7 +229,18 @@ export class TCloudClient {
       delete headers['Authorization'] // don't send API key in private mode
     }
 
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/chat/completions`, {
+    // Use private router to select operator and override base URL
+    let requestBaseURL = this.baseURL
+    if (this.privateRouter) {
+      const model = options.model || this.model
+      const operator = this.privateRouter.selectOperator(model)
+      if (operator) {
+        requestBaseURL = operator.endpointUrl.replace(/\/$/, '')
+        headers['X-Tangle-Operator'] = operator.slug
+      }
+    }
+
+    const res = await proxiedFetch(this.privacy, `${requestBaseURL}/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -255,7 +280,18 @@ export class TCloudClient {
       delete headers['Authorization']
     }
 
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/chat/completions`, {
+    // Use private router to select operator and override base URL
+    let requestBaseURL = this.baseURL
+    if (this.privateRouter) {
+      const model = options.model || this.model
+      const operator = this.privateRouter.selectOperator(model)
+      if (operator) {
+        requestBaseURL = operator.endpointUrl.replace(/\/$/, '')
+        headers['X-Tangle-Operator'] = operator.slug
+      }
+    }
+
+    const res = await proxiedFetch(this.privacy, `${requestBaseURL}/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
