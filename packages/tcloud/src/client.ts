@@ -35,7 +35,7 @@ import type {
   JobEvent,
   WatchJobOptions,
 } from './types'
-import { PrivateRouter } from './private-router'
+import { PrivateRouter, type OperatorInfo } from './private-router'
 
 const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
 
@@ -108,6 +108,9 @@ export class TCloudClient {
   private _totalSpent = 0
   private _requestCount = 0
   readonly privateRouter?: PrivateRouter
+  private _cachedOperators: OperatorInfo[] = []
+  private _operatorsCachedAt = 0
+  private static readonly OPERATORS_TTL_MS = 5 * 60 * 1000
 
   constructor(config: TCloudConfig = {}) {
     this.baseURL = (config.baseURL || DEFAULT_BASE_URL).replace(/\/$/, '')
@@ -193,6 +196,26 @@ export class TCloudClient {
     }
   }
 
+  /** Ensure the private router has operators loaded (with TTL-based caching) */
+  private async ensureRouterOperators(): Promise<void> {
+    if (!this.privateRouter) return
+    const now = Date.now()
+    if (this._cachedOperators.length > 0 && (now - this._operatorsCachedAt) < TCloudClient.OPERATORS_TTL_MS) {
+      return
+    }
+    const data = await this.operators()
+    this._cachedOperators = (data.operators || []).map((op: Operator) => ({
+      slug: op.slug,
+      endpointUrl: op.endpointUrl,
+      region: '',
+      reputationScore: op.reputationScore,
+      avgLatencyMs: op.avgLatencyMs,
+      models: op.models.map((m) => m.modelId),
+    }))
+    this._operatorsCachedAt = now
+    this.privateRouter.setOperators(this._cachedOperators)
+  }
+
   /** Track cost after a response, using actual pricing from response headers when available */
   private trackCost(completion: ChatCompletion, res?: Response) {
     this._requestCount++
@@ -232,11 +255,14 @@ export class TCloudClient {
     // Use private router to select operator and override base URL
     let requestBaseURL = this.baseURL
     if (this.privateRouter) {
+      await this.ensureRouterOperators()
       const model = options.model || this.model
       const operator = this.privateRouter.selectOperator(model)
       if (operator) {
         requestBaseURL = operator.endpointUrl.replace(/\/$/, '')
         headers['X-Tangle-Operator'] = operator.slug
+        // Don't leak API key to operator — operator authenticates via X-Tangle-Operator
+        delete headers['Authorization']
       }
     }
 
@@ -283,11 +309,14 @@ export class TCloudClient {
     // Use private router to select operator and override base URL
     let requestBaseURL = this.baseURL
     if (this.privateRouter) {
+      await this.ensureRouterOperators()
       const model = options.model || this.model
       const operator = this.privateRouter.selectOperator(model)
       if (operator) {
         requestBaseURL = operator.endpointUrl.replace(/\/$/, '')
         headers['X-Tangle-Operator'] = operator.slug
+        // Don't leak API key to operator — operator authenticates via X-Tangle-Operator
+        delete headers['Authorization']
       }
     }
 
@@ -709,11 +738,15 @@ export class TCloudClient {
     const timer = setTimeout(() => controller.abort(), timeout)
 
     try {
+      const watchHeaders = { ...this.headers, Accept: 'text/event-stream' }
+      // When connecting to an operator URL, don't leak the API key.
+      // The job ID itself is the capability token for operator auth.
+      if (options?.operatorUrl) {
+        delete watchHeaders['Authorization']
+      }
+
       const res = await proxiedFetch(this.privacy, url, {
-        headers: {
-          ...this.headers,
-          Accept: 'text/event-stream',
-        },
+        headers: watchHeaders,
         signal: controller.signal,
       }, true)
 
