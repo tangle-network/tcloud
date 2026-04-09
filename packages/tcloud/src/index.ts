@@ -123,5 +123,7 @@ export type {
   AvatarGenerateResponse,
   AvatarResult,
   AvatarJobStatus,
+  JobEvent,
+  WatchJobOptions,
 } from './types'
 export type { ShieldedWallet } from './shielded'
