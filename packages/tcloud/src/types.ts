@@ -366,6 +366,8 @@ export interface WatchJobOptions {
   timeout?: number
   /** Model to route to (for operator discovery) */
   model?: string
+  /** SSE bearer token (replaces API key for operator SSE auth) */
+  sseToken?: string
 }
 
 export interface SpendAuth {

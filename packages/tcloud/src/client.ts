@@ -114,7 +114,7 @@ export class TCloudClient {
 
   constructor(config: TCloudConfig = {}) {
     this.baseURL = (config.baseURL || DEFAULT_BASE_URL).replace(/\/$/, '')
-    this.apiKey = config.apiKey || process.env.TCLOUD_API_KEY || process.env.OPENAI_API_KEY
+    this.apiKey = config.apiKey || process.env.TCLOUD_API_KEY
     this.model = config.model || 'gpt-4o-mini'
     this.privacy = config.privacy
     this.limits = config.limits
@@ -297,6 +297,7 @@ export class TCloudClient {
   /** Chat completion (streaming) — returns an async iterator of chunks */
   async *chatStream(options: ChatOptions): AsyncGenerator<ChatCompletionChunk> {
     this.checkLimits()
+    this._requestCount++
 
     const headers = { ...this.headers }
 
@@ -347,6 +348,7 @@ export class TCloudClient {
       const { done, value } = await reader.read()
       if (done) break
       buf += decoder.decode(value, { stream: true })
+      if (buf.length > 1_048_576) throw new TCloudError(502, 'SSE buffer overflow — server sent >1MB without newline')
 
       const lines = buf.split('\n')
       buf = lines.pop() || ''
@@ -355,7 +357,6 @@ export class TCloudClient {
         if (!line.startsWith('data: ')) continue
         const data = line.slice(6).trim()
         if (data === '[DONE]') {
-          this._requestCount++
           return
         }
         try {
@@ -744,6 +745,10 @@ export class TCloudClient {
       if (options?.operatorUrl) {
         delete watchHeaders['Authorization']
       }
+      // SSE token overrides any existing Authorization header
+      if (options?.sseToken) {
+        watchHeaders['Authorization'] = `Bearer ${options.sseToken}`
+      }
 
       const res = await proxiedFetch(this.privacy, url, {
         headers: watchHeaders,
@@ -766,6 +771,7 @@ export class TCloudClient {
           throw new TCloudError(502, `SSE stream ended without terminal event for job ${jobId}`)
         }
         buf += decoder.decode(value, { stream: true })
+        if (buf.length > 1_048_576) throw new TCloudError(502, 'SSE buffer overflow — server sent >1MB without newline')
 
         const lines = buf.split('\n')
         buf = lines.pop() || ''
@@ -782,7 +788,11 @@ export class TCloudClient {
             continue
           }
 
-          options?.onEvent?.(event)
+          try {
+            options?.onEvent?.(event)
+          } catch (cbErr) {
+            console.error('watchJob onEvent callback error:', cbErr)
+          }
 
           if (terminalStatuses.has(event.status)) {
             return event
