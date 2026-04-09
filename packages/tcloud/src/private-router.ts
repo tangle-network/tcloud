@@ -42,6 +42,12 @@ interface OperatorUsage {
   lastUsedAt: number
 }
 
+function secureRandom(): number {
+  const arr = new Uint32Array(1)
+  crypto.getRandomValues(arr)
+  return arr[0] / (0xffffffff + 1)
+}
+
 export class PrivateRouter {
   private config: PrivateRouterConfig
   private operators: OperatorInfo[] = []
@@ -80,6 +86,14 @@ export class PrivateRouter {
   selectOperator(model: string): OperatorInfo | null {
     const eligible = this.operators.filter((o) => o.models.includes(model))
     if (eligible.length === 0) return null
+
+    if (eligible.length < this.config.minOperators) {
+      console.warn(
+        `[PrivateRouter] Only ${eligible.length} eligible operator(s) for model "${model}", ` +
+        `but minOperators requires ${this.config.minOperators}. Refusing to route.`
+      )
+      return null
+    }
 
     this.totalRequests++
 
@@ -131,7 +145,7 @@ export class PrivateRouter {
   }
 
   private random(eligible: OperatorInfo[]): OperatorInfo {
-    const idx = Math.floor(Math.random() * eligible.length)
+    const idx = Math.floor(secureRandom() * eligible.length)
     const op = eligible[idx]
     this.recordUsage(op)
     return op
@@ -148,31 +162,34 @@ export class PrivateRouter {
     const sortedRegions = [...regionUsage.entries()].sort((a, b) => a[1] - b[1])
     const targetRegion = sortedRegions[0]?.[0]
     const regionOps = eligible.filter((o) => o.region === targetRegion)
-    const op = regionOps[Math.floor(Math.random() * regionOps.length)] || eligible[0]
+    const op = regionOps[Math.floor(secureRandom() * regionOps.length)] || eligible[0]
     this.recordUsage(op)
     return op
   }
 
   private minExposure(eligible: OperatorInfo[]): OperatorInfo {
-    // Pick the operator with the fewest requests, switching if any hit the max
+    // Proactively rotate: prefer operators other than lastUsed when available.
+    // Only fall back to lastUsed when no others remain, or force-switch at max.
     const lastUsed = this.getLastUsedOperator()
     if (lastUsed) {
       const lastUsage = this.usage.get(lastUsed.slug)
-      if (lastUsage && lastUsage.requestCount >= this.config.maxRequestsPerOperator) {
-        // Force switch — pick the least-used operator
-        const others = eligible.filter((o) => o.slug !== lastUsed.slug)
-        if (others.length > 0) {
-          const sorted = others.sort(
-            (a, b) => (this.usage.get(a.slug)?.requestCount || 0) - (this.usage.get(b.slug)?.requestCount || 0)
-          )
-          const op = sorted[0]
-          this.recordUsage(op)
-          return op
-        }
+      const others = eligible.filter((o) => o.slug !== lastUsed.slug)
+
+      // If lastUsed has been used at all and others exist, rotate to least-used other
+      if (others.length > 0 && lastUsage && lastUsage.requestCount > 0) {
+        const sorted = others.sort(
+          (a, b) => (this.usage.get(a.slug)?.requestCount || 0) - (this.usage.get(b.slug)?.requestCount || 0)
+        )
+        const op = sorted[0]
+        this.recordUsage(op)
+        return op
       }
     }
-    // Otherwise use current operator
-    const op = lastUsed || eligible[0]
+    // No lastUsed or no others available — pick the least-used overall
+    const sorted = [...eligible].sort(
+      (a, b) => (this.usage.get(a.slug)?.requestCount || 0) - (this.usage.get(b.slug)?.requestCount || 0)
+    )
+    const op = sorted[0]
     this.recordUsage(op)
     return op
   }
@@ -185,7 +202,7 @@ export class PrivateRouter {
       return Math.max(latencyWeight - usagePenalty, 0.01)
     })
     const totalWeight = weights.reduce((s, w) => s + w, 0)
-    let r = Math.random() * totalWeight
+    let r = secureRandom() * totalWeight
     for (let i = 0; i < eligible.length; i++) {
       r -= weights[i]
       if (r <= 0) {
@@ -219,12 +236,59 @@ export class PrivateRouter {
   }
 
   private peekNextOperator(model: string): OperatorInfo | null {
-    // Preview which operator would be selected without recording
+    // Simulate the next selection without recording usage.
+    // For non-deterministic strategies, we check whether the next call
+    // *could* return a different operator than the last one used.
     const eligible = this.operators.filter((o) => o.models.includes(model))
     if (eligible.length === 0) return null
-    if (this.config.strategy === 'round-robin') {
-      return eligible[this.currentIndex % eligible.length]
+    if (eligible.length < this.config.minOperators) return null
+
+    const last = this.getLastUsedOperator()
+
+    switch (this.config.strategy) {
+      case 'round-robin':
+        return eligible[this.currentIndex % eligible.length]
+
+      case 'min-exposure': {
+        // Simulates proactive rotation logic
+        if (last) {
+          const lastUsage = this.usage.get(last.slug)
+          const others = eligible.filter((o) => o.slug !== last.slug)
+          if (others.length > 0 && lastUsage && lastUsage.requestCount > 0) {
+            const sorted = others.sort(
+              (a, b) => (this.usage.get(a.slug)?.requestCount || 0) - (this.usage.get(b.slug)?.requestCount || 0)
+            )
+            return sorted[0]
+          }
+        }
+        const sorted = [...eligible].sort(
+          (a, b) => (this.usage.get(a.slug)?.requestCount || 0) - (this.usage.get(b.slug)?.requestCount || 0)
+        )
+        return sorted[0]
+      }
+
+      case 'geo-distributed': {
+        const regionUsage = new Map<string, number>()
+        for (const op of eligible) {
+          const usage = this.usage.get(op.slug)?.requestCount || 0
+          const current = regionUsage.get(op.region) || 0
+          regionUsage.set(op.region, current + usage)
+        }
+        const sortedRegions = [...regionUsage.entries()].sort((a, b) => a[1] - b[1])
+        const targetRegion = sortedRegions[0]?.[0]
+        const regionOps = eligible.filter((o) => o.region === targetRegion)
+        return regionOps[0] || eligible[0]
+      }
+
+      case 'random':
+      case 'latency-aware':
+      default:
+        // Non-deterministic: if multiple eligible operators exist and one differs
+        // from last, a switch is possible. Return a different operator if available.
+        if (last && eligible.length > 1) {
+          return eligible.find((o) => o.slug !== last.slug) || eligible[0]
+        }
+        return eligible[0]
     }
-    return eligible[0]
   }
 }
