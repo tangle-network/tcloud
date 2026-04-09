@@ -15,7 +15,7 @@
  * 5. Optionally summarizes context when switching operators (reduces leakage)
  */
 
-import { PrivateRouter, type OperatorInfo, type PrivateRouterConfig } from './private-router'
+import { PrivateRouter, type OperatorInfo, type PrivateRouterConfig } from '@tangle-network/tcloud'
 import { generateWallet, signSpendAuth, type ShieldedWallet } from '@tangle-network/tcloud/shielded'
 import type { Hex } from 'viem'
 
