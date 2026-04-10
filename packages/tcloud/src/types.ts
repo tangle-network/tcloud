@@ -263,6 +263,14 @@ export interface ChatOptions {
   responseFormat?: { type: 'text' | 'json_object' }
   /** Tools / function calling */
   tools?: any[]
+  /** Tool choice strategy or specific tool */
+  toolChoice?: 'none' | 'auto' | 'required' | { type: 'function'; function: { name: string } }
+  /**
+   * Provider-specific parameters passed through to the upstream API.
+   * These are spread into the request body alongside standard fields.
+   * Example: `{ thinking: { type: 'enabled', budget_tokens: 8000 } }`
+   */
+  providerOptions?: Record<string, unknown>
 }
 
 export interface ChatCompletion {
