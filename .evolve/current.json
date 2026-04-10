@@ -1,11 +1,15 @@
 {
   "mode": "evolve",
-  "generation": 1,
+  "generation": 2,
   "activePursuit": null,
   "baselines": {
-    "tests": 195,
-    "testFiles": 8,
-    "publicMethodsCovered": "39/39 through shared helpers",
+    "tests": 213,
+    "testFiles": 10,
+    "version": "0.2.0",
+    "retrySupport": true,
+    "timeoutSupport": true,
+    "proxiedFetchTested": true,
+    "chatDRYViolation": false,
     "errorHandlingPatterns": 1,
     "methodsMissingRequestCount": 0,
     "methodsBypassingLimits": 0

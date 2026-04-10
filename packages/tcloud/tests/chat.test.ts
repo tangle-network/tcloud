@@ -248,12 +248,12 @@ describe('chatStream()', () => {
   it('throws on non-ok response', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: false,
-      status: 500,
-      statusText: 'Internal Server Error',
+      status: 422,
+      statusText: 'Unprocessable Entity',
       headers: new Headers(),
       json: async () => ({ error: 'server error' }),
     } as unknown as Response)
-    const client = new TCloudClient({ apiKey: 'sk-tan-test' })
+    const client = new TCloudClient({ apiKey: 'sk-tan-test', retry: false })
     await expect(async () => {
       for await (const _ of client.chatStream({ messages: [{ role: 'user', content: 'hi' }] })) {}
     }).rejects.toThrow()

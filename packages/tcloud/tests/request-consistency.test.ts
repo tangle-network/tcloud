@@ -161,13 +161,14 @@ describe('error handling consistency', () => {
     it(`${name}() handles non-JSON error responses gracefully`, async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: false,
-        status: 502,
-        statusText: 'Bad Gateway',
+        status: 422,
+        statusText: 'Unprocessable Entity',
         headers: new Headers(),
         json: async () => { throw new Error('not json') },
       } as unknown as Response)
 
-      const client = new TCloudClient({ apiKey: 'sk-tan-test' })
+      // retry: false to avoid retrying the error status
+      const client = new TCloudClient({ apiKey: 'sk-tan-test', retry: false })
       await expect(call(client)).rejects.toThrow(TCloudError)
     })
   }

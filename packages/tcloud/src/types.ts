@@ -15,6 +15,23 @@ export interface TCloudConfig {
   privacy?: PrivacyConfig
   /** Spending limits and metering */
   limits?: SpendingLimits
+  /** Retry configuration for transient failures */
+  retry?: RetryConfig | false
+  /** Default request timeout in ms (default: 60000). Set 0 to disable. */
+  timeout?: number
+}
+
+export interface RetryConfig {
+  /** Max retry attempts (default: 3) */
+  maxRetries?: number
+  /** Initial backoff in ms (default: 500) */
+  initialBackoffMs?: number
+  /** Max backoff in ms (default: 30000) */
+  maxBackoffMs?: number
+  /** Backoff multiplier (default: 2) */
+  multiplier?: number
+  /** HTTP status codes that trigger retry (default: [429, 500, 502, 503, 504]) */
+  retryableStatuses?: number[]
 }
 
 export interface SpendingLimits {

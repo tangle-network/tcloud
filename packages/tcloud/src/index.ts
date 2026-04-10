@@ -94,6 +94,7 @@ export type {
   TCloudConfig,
   PrivacyConfig,
   SpendingLimits,
+  RetryConfig,
   ChatMessage,
   ChatOptions,
   ChatCompletion,

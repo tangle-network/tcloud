@@ -7,6 +7,7 @@ import type {
   TCloudConfig,
   PrivacyConfig,
   SpendingLimits,
+  RetryConfig,
   ChatOptions,
   ChatCompletion,
   ChatCompletionChunk,
@@ -97,6 +98,16 @@ async function proxiedFetch(
   return fetch(url, init)
 }
 
+const DEFAULT_RETRY: Required<RetryConfig> = {
+  maxRetries: 3,
+  initialBackoffMs: 500,
+  maxBackoffMs: 30_000,
+  multiplier: 2,
+  retryableStatuses: [429, 500, 502, 503, 504],
+}
+
+const DEFAULT_TIMEOUT_MS = 60_000
+
 export class TCloudClient {
   readonly baseURL: string
   readonly apiKey?: string
@@ -105,6 +116,8 @@ export class TCloudClient {
   private spendAuthFn?: () => Promise<SpendAuth>
   private privacy?: PrivacyConfig
   private limits?: SpendingLimits
+  private retryConfig: Required<RetryConfig> | null
+  private timeoutMs: number
   private _totalSpent = 0
   private _requestCount = 0
   readonly privateRouter?: PrivateRouter
@@ -118,10 +131,12 @@ export class TCloudClient {
     this.model = config.model || 'gpt-4o-mini'
     this.privacy = config.privacy
     this.limits = config.limits
+    this.retryConfig = config.retry === false ? null : { ...DEFAULT_RETRY, ...config.retry }
+    this.timeoutMs = config.timeout ?? DEFAULT_TIMEOUT_MS
 
     this.headers = {
       'Content-Type': 'application/json',
-      'X-Tangle-Client': 'tcloud-sdk/0.1.4',
+      'X-Tangle-Client': 'tcloud-sdk/0.2.0',
     }
 
     if (this.apiKey) {
@@ -240,19 +255,72 @@ export class TCloudClient {
   }
 
   /**
+   * Core fetch with retry + timeout. All helpers build on this.
+   * Retries on retryable status codes with exponential backoff + jitter.
+   */
+  private async _doFetch(url: string, init: RequestInit, streaming: boolean): Promise<Response> {
+    const retry = this.retryConfig
+    const maxAttempts = retry ? retry.maxRetries + 1 : 1
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const controller = new AbortController()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      if (this.timeoutMs > 0 && !streaming) {
+        timer = setTimeout(() => controller.abort(), this.timeoutMs)
+      }
+
+      try {
+        const res = await proxiedFetch(this.privacy, url, {
+          ...init,
+          signal: controller.signal,
+        }, streaming)
+
+        if (res.ok) return res
+
+        // Check if retryable
+        if (retry && attempt < retry.maxRetries && retry.retryableStatuses.includes(res.status)) {
+          const backoff = Math.min(
+            retry.initialBackoffMs * Math.pow(retry.multiplier, attempt),
+            retry.maxBackoffMs,
+          )
+          const jitter = backoff * 0.5 * Math.random()
+          await new Promise(r => setTimeout(r, backoff + jitter))
+          continue
+        }
+
+        // Not retryable or exhausted retries
+        const err = await res.json().catch(() => ({ error: res.statusText }))
+        throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
+      } catch (e: any) {
+        if (e instanceof TCloudError) throw e
+        // Timeout and network errors are retryable
+        if (retry && attempt < retry.maxRetries) {
+          const backoff = Math.min(
+            retry.initialBackoffMs * Math.pow(retry.multiplier, attempt),
+            retry.maxBackoffMs,
+          )
+          await new Promise(r => setTimeout(r, backoff))
+          continue
+        }
+        if (e?.name === 'AbortError') {
+          throw new TCloudError(408, `Request timed out after ${this.timeoutMs}ms`)
+        }
+        throw new TCloudError(0, e?.message || 'Network error')
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+      }
+    }
+    // Should never reach here, but satisfy TypeScript
+    throw new TCloudError(0, 'Retry loop exhausted')
+  }
+
+  /**
    * Shared request helper for billable JSON API calls.
-   * Enforces: checkLimits → proxiedFetch → error parsing → requestCount.
+   * Enforces: checkLimits → fetch with retry/timeout → error parsing → requestCount.
    */
   private async _request<T>(url: string, init: RequestInit & { method?: string } = {}): Promise<T> {
     this.checkLimits()
-    const res = await proxiedFetch(this.privacy, url, {
-      headers: this.headers,
-      ...init,
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
-    }
+    const res = await this._doFetch(url, { headers: this.headers, ...init }, false)
     this._requestCount++
     return res.json()
   }
@@ -262,14 +330,7 @@ export class TCloudClient {
    * No limits check, no request counting.
    */
   private async _fetch<T>(url: string, init: RequestInit & { method?: string } = {}): Promise<T> {
-    const res = await proxiedFetch(this.privacy, url, {
-      headers: this.headers,
-      ...init,
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
-    }
+    const res = await this._doFetch(url, { headers: this.headers, ...init }, false)
     return res.json()
   }
 
@@ -278,69 +339,67 @@ export class TCloudClient {
    */
   private async _requestRaw(url: string, init: RequestInit & { method?: string } = {}): Promise<Response> {
     this.checkLimits()
-    const res = await proxiedFetch(this.privacy, url, {
-      headers: this.headers,
-      ...init,
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
-    }
+    const res = await this._doFetch(url, { headers: this.headers, ...init }, false)
     this._requestCount++
     return res
+  }
+
+  /**
+   * Prepare headers for chat requests — operator routing + SpendAuth.
+   * Shared between chat() and chatStream() to eliminate duplication.
+   */
+  private async _prepareChatRequest(model: string): Promise<{ headers: Record<string, string>; baseURL: string }> {
+    const headers = { ...this.headers }
+
+    if (this.spendAuthFn) {
+      const auth = await this.spendAuthFn()
+      headers['X-Payment-Signature'] = JSON.stringify(auth)
+      delete headers['Authorization']
+    }
+
+    let baseURL = this.baseURL
+    if (this.privateRouter) {
+      await this.ensureRouterOperators()
+      const operator = this.privateRouter.selectOperator(model)
+      if (operator) {
+        baseURL = operator.endpointUrl.replace(/\/$/, '')
+        headers['X-Tangle-Operator'] = operator.slug
+        delete headers['Authorization']
+      }
+    }
+
+    return { headers, baseURL }
+  }
+
+  /** Build the chat completions request body */
+  private _chatBody(options: ChatOptions, stream: boolean): string {
+    return JSON.stringify({
+      model: options.model || this.model,
+      messages: options.messages,
+      temperature: options.temperature,
+      max_tokens: options.maxTokens,
+      stream,
+      stop: options.stop,
+      top_p: options.topP,
+      frequency_penalty: options.frequencyPenalty,
+      presence_penalty: options.presencePenalty,
+      response_format: options.responseFormat,
+      tools: options.tools,
+      tool_choice: options.toolChoice,
+      ...options.providerOptions,
+    })
   }
 
   /** Chat completion (non-streaming) */
   async chat(options: ChatOptions): Promise<ChatCompletion> {
     this.checkLimits()
+    const { headers, baseURL } = await this._prepareChatRequest(options.model || this.model)
 
-    const headers = { ...this.headers }
-
-    // Attach SpendAuth if in private mode
-    if (this.spendAuthFn) {
-      const auth = await this.spendAuthFn()
-      headers['X-Payment-Signature'] = JSON.stringify(auth)
-      delete headers['Authorization'] // don't send API key in private mode
-    }
-
-    // Use private router to select operator and override base URL
-    let requestBaseURL = this.baseURL
-    if (this.privateRouter) {
-      await this.ensureRouterOperators()
-      const model = options.model || this.model
-      const operator = this.privateRouter.selectOperator(model)
-      if (operator) {
-        requestBaseURL = operator.endpointUrl.replace(/\/$/, '')
-        headers['X-Tangle-Operator'] = operator.slug
-        // Don't leak API key to operator — operator authenticates via X-Tangle-Operator
-        delete headers['Authorization']
-      }
-    }
-
-    const res = await proxiedFetch(this.privacy, `${requestBaseURL}/chat/completions`, {
+    const res = await this._doFetch(`${baseURL}/chat/completions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        model: options.model || this.model,
-        messages: options.messages,
-        temperature: options.temperature,
-        max_tokens: options.maxTokens,
-        stream: false,
-        stop: options.stop,
-        top_p: options.topP,
-        frequency_penalty: options.frequencyPenalty,
-        presence_penalty: options.presencePenalty,
-        response_format: options.responseFormat,
-        tools: options.tools,
-        tool_choice: options.toolChoice,
-        ...options.providerOptions,
-      }),
+      body: this._chatBody(options, false),
     }, false)
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
-    }
 
     const completion: ChatCompletion = await res.json()
     this.trackCost(completion, res)
@@ -351,53 +410,13 @@ export class TCloudClient {
   async *chatStream(options: ChatOptions): AsyncGenerator<ChatCompletionChunk> {
     this.checkLimits()
     this._requestCount++
+    const { headers, baseURL } = await this._prepareChatRequest(options.model || this.model)
 
-    const headers = { ...this.headers }
-
-    if (this.spendAuthFn) {
-      const auth = await this.spendAuthFn()
-      headers['X-Payment-Signature'] = JSON.stringify(auth)
-      delete headers['Authorization']
-    }
-
-    // Use private router to select operator and override base URL
-    let requestBaseURL = this.baseURL
-    if (this.privateRouter) {
-      await this.ensureRouterOperators()
-      const model = options.model || this.model
-      const operator = this.privateRouter.selectOperator(model)
-      if (operator) {
-        requestBaseURL = operator.endpointUrl.replace(/\/$/, '')
-        headers['X-Tangle-Operator'] = operator.slug
-        // Don't leak API key to operator — operator authenticates via X-Tangle-Operator
-        delete headers['Authorization']
-      }
-    }
-
-    const res = await proxiedFetch(this.privacy, `${requestBaseURL}/chat/completions`, {
+    const res = await this._doFetch(`${baseURL}/chat/completions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        model: options.model || this.model,
-        messages: options.messages,
-        temperature: options.temperature,
-        max_tokens: options.maxTokens,
-        stream: true,
-        stop: options.stop,
-        top_p: options.topP,
-        frequency_penalty: options.frequencyPenalty,
-        presence_penalty: options.presencePenalty,
-        response_format: options.responseFormat,
-        tools: options.tools,
-        tool_choice: options.toolChoice,
-        ...options.providerOptions,
-      }),
+      body: this._chatBody(options, true),
     }, true)
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error || err.message || res.statusText)
-    }
 
     const reader = res.body!.getReader()
     const decoder = new TextDecoder()
