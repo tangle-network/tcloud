@@ -239,6 +239,57 @@ export class TCloudClient {
     }
   }
 
+  /**
+   * Shared request helper for billable JSON API calls.
+   * Enforces: checkLimits → proxiedFetch → error parsing → requestCount.
+   */
+  private async _request<T>(url: string, init: RequestInit & { method?: string } = {}): Promise<T> {
+    this.checkLimits()
+    const res = await proxiedFetch(this.privacy, url, {
+      headers: this.headers,
+      ...init,
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
+    }
+    this._requestCount++
+    return res.json()
+  }
+
+  /**
+   * Shared request helper for read-only/non-billable JSON API calls.
+   * No limits check, no request counting.
+   */
+  private async _fetch<T>(url: string, init: RequestInit & { method?: string } = {}): Promise<T> {
+    const res = await proxiedFetch(this.privacy, url, {
+      headers: this.headers,
+      ...init,
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
+    }
+    return res.json()
+  }
+
+  /**
+   * Shared request helper for billable calls that return non-JSON (e.g. ArrayBuffer).
+   */
+  private async _requestRaw(url: string, init: RequestInit & { method?: string } = {}): Promise<Response> {
+    this.checkLimits()
+    const res = await proxiedFetch(this.privacy, url, {
+      headers: this.headers,
+      ...init,
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
+    }
+    this._requestCount++
+    return res
+  }
+
   /** Chat completion (non-streaming) */
   async chat(options: ChatOptions): Promise<ChatCompletion> {
     this.checkLimits()
@@ -413,59 +464,44 @@ export class TCloudClient {
 
   /** List available models */
   async models(): Promise<Model[]> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/models`, { headers: this.headers }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch models')
-    const data = await res.json()
+    const data = await this._fetch<{ data: Model[] }>(`${this.baseURL}/models`)
     return data.data || []
   }
 
   /** List active operators */
   async operators(): Promise<{ operators: Operator[]; stats: any }> {
-    // Operators endpoint is at the API root, not /v1
     const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/operators`, { headers: this.headers }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch operators')
-    return res.json()
+    return this._fetch(`${apiRoot}/api/operators`)
   }
 
   /** Get credit balance */
   async credits(): Promise<CreditBalance> {
     const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/billing`, { headers: this.headers }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch credits')
-    return res.json()
+    return this._fetch(`${apiRoot}/api/billing`)
   }
 
   /** Add credits */
   async addCredits(amount: number): Promise<{ balance: number }> {
     const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/billing`, {
+    return this._fetch(`${apiRoot}/api/billing`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify({ amount }),
-    }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to add credits')
-    return res.json()
+    })
   }
 
   /** Create a new API key */
   async createKey(name: string): Promise<{ key: string; id: string }> {
     const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/keys`, {
+    return this._fetch(`${apiRoot}/api/keys`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify({ name }),
-    }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to create API key')
-    return res.json()
+    })
   }
 
   /** List API keys */
   async keys(): Promise<{ id: string; name: string; prefix: string; createdAt: string; lastUsedAt: string | null }[]> {
     const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/keys`, { headers: this.headers }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch keys')
-    return res.json()
+    return this._fetch(`${apiRoot}/api/keys`)
   }
 
   /** Revoke an API key */
@@ -475,32 +511,27 @@ export class TCloudClient {
       method: 'DELETE',
       headers: this.headers,
     }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to revoke key')
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
+    }
   }
 
   /** Generate embeddings */
   async embeddings(options: EmbeddingOptions): Promise<EmbeddingResponse> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/embeddings`, {
+    return this._request(`${this.baseURL}/embeddings`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify({
         model: options.model || 'text-embedding-3-small',
         input: options.input,
       }),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    this._requestCount++
-    return res.json()
+    })
   }
 
   /** Generate images */
   async imageGenerate(options: ImageGenerateOptions): Promise<ImageResponse> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/images/generations`, {
+    return this._request(`${this.baseURL}/images/generations`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify({
         model: options.model || 'dall-e-3',
         prompt: options.prompt,
@@ -509,59 +540,39 @@ export class TCloudClient {
         quality: options.quality,
         response_format: options.response_format,
       }),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    this._requestCount++
-    return res.json()
+    })
   }
 
   /** Rerank documents by relevance to a query */
   async rerank(options: RerankOptions): Promise<RerankResponse> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/rerank`, {
+    return this._request(`${this.baseURL}/rerank`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify({
         model: options.model || 'rerank-english-v3.0',
         query: options.query,
         documents: options.documents,
         top_n: options.top_n,
       }),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    this._requestCount++
-    return res.json()
+    })
   }
 
   /** Text-to-speech */
   async speech(options: { model?: string; input: string; voice?: string }): Promise<ArrayBuffer> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/audio/speech`, {
+    const res = await this._requestRaw(`${this.baseURL}/audio/speech`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify({
         model: options.model || 'tts-1',
         input: options.input,
         voice: options.voice || 'alloy',
       }),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    this._requestCount++
+    })
     return res.arrayBuffer()
   }
 
   /** Legacy completions endpoint */
   async completions(options: CompletionOptions): Promise<CompletionResponse> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/completions`, {
+    return this._request(`${this.baseURL}/completions`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify({
         model: options.model || this.model,
         prompt: options.prompt,
@@ -570,13 +581,7 @@ export class TCloudClient {
         stop: options.stop,
         top_p: options.topP,
       }),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    this._requestCount++
-    return res.json()
+    })
   }
 
   /** Audio transcription (speech-to-text) */
@@ -590,6 +595,7 @@ export class TCloudClient {
     const headers = { ...this.headers }
     delete headers['Content-Type'] // let FormData set it
 
+    this.checkLimits()
     const res = await proxiedFetch(this.privacy, `${this.baseURL}/audio/transcriptions`, {
       method: 'POST',
       headers,
@@ -597,7 +603,7 @@ export class TCloudClient {
     }, false)
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
+      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
     }
     this._requestCount++
     return res.json()
@@ -605,111 +611,55 @@ export class TCloudClient {
 
   /** Create a fine-tuning job */
   async fineTuneCreate(options: FineTuningJobOptions): Promise<FineTuningJob> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/fine_tuning/jobs`, {
+    return this._request(`${this.baseURL}/fine_tuning/jobs`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify(options),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    this._requestCount++
-    return res.json()
+    })
   }
 
   /** List fine-tuning jobs */
   async fineTuneList(): Promise<{ data: FineTuningJob[] }> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/fine_tuning/jobs`, {
-      headers: this.headers,
-    }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch fine-tuning jobs')
-    return res.json()
+    return this._fetch(`${this.baseURL}/fine_tuning/jobs`)
   }
 
   /** Submit a batch of chat requests */
   async batch(requests: BatchRequest[]): Promise<BatchJobResponse> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/batch`, {
+    return this._request(`${this.baseURL}/batch`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify({ requests }),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    return res.json()
+    })
   }
 
   /** Get batch job status */
   async batchStatus(jobId: string): Promise<BatchJobResponse> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/batch?id=${jobId}`, {
-      headers: this.headers,
-    }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch batch status')
-    return res.json()
+    return this._fetch(`${this.baseURL}/batch?id=${jobId}`)
   }
 
   /** Generate video */
   async videoGenerate(options: VideoGenerateOptions): Promise<VideoResponse> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/video/generate`, {
+    return this._request(`${this.baseURL}/video/generate`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify(options),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    this._requestCount++
-    return res.json()
+    })
   }
 
   /** Get video generation status */
   async videoStatus(id: string): Promise<VideoResponse> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/video?id=${id}`, {
-      headers: this.headers,
-    }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to fetch video status')
-    return res.json()
+    return this._fetch(`${this.baseURL}/video?id=${id}`)
   }
 
   /** Generate an avatar video (lip-synced talking head from audio + face image).
    *  Returns 202 with a job_id for async polling via avatarJobStatus(). */
   async avatarGenerate(options: AvatarGenerateRequest): Promise<AvatarGenerateResponse> {
-    this.checkLimits()
-
-    const headers = { ...this.headers }
-
-    if (this.spendAuthFn) {
-      const auth = await this.spendAuthFn()
-      headers['X-Payment-Signature'] = JSON.stringify(auth)
-      delete headers['Authorization']
-    }
-
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/avatar/generate`, {
+    return this._request(`${this.baseURL}/avatar/generate`, {
       method: 'POST',
-      headers,
       body: JSON.stringify(options),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    this._requestCount++
-    return res.json()
+    })
   }
 
   /** Poll an avatar generation job by ID. */
   async avatarJobStatus(jobId: string): Promise<AvatarJobStatus> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/avatar/jobs/${jobId}`, {
-      headers: this.headers,
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    return res.json()
+    return this._fetch(`${this.baseURL}/avatar/jobs/${jobId}`)
   }
 
   /** Poll an avatar job until it reaches a terminal state (completed/failed).
@@ -826,67 +776,39 @@ export class TCloudClient {
 
   /** Create a vector collection on the operator's vector store */
   async createCollection(options: { name: string; dimensions: number; distance_metric?: string }): Promise<any> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/collections`, {
+    return this._request(`${this.baseURL}/collections`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify(options),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    return res.json()
+    })
   }
 
   /** List collections on the operator's vector store */
   async listCollections(): Promise<any> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/collections`, {
-      headers: this.headers,
-    }, false)
-    if (!res.ok) throw new TCloudError(res.status, 'Failed to list collections')
-    return res.json()
+    return this._fetch(`${this.baseURL}/collections`)
   }
 
   /** Upsert vectors into a collection */
   async upsertVectors(collection: string, vectors: Array<{ id: string; vector: number[]; metadata?: Record<string, any> }>): Promise<any> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/collections/${encodeURIComponent(collection)}/upsert`, {
+    return this._request(`${this.baseURL}/collections/${encodeURIComponent(collection)}/upsert`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify({ vectors }),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    return res.json()
+    })
   }
 
   /** Similarity search in a collection */
   async queryVectors(collection: string, options: { vector: number[]; top_k?: number; filter?: Record<string, any> }): Promise<any> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/collections/${encodeURIComponent(collection)}/query`, {
+    return this._request(`${this.baseURL}/collections/${encodeURIComponent(collection)}/query`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify(options),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    return res.json()
+    })
   }
 
   /** RAG query — embed text + search collection in one call */
   async ragQuery(options: { query: string; collection: string; top_k?: number; embedding_model?: string }): Promise<any> {
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/rag`, {
+    return this._request(`${this.baseURL}/rag`, {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify(options),
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-    }
-    return res.json()
+    })
   }
 
   /** Search models by name, provider, or capability */
