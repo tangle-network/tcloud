@@ -281,6 +281,8 @@ export class TCloudClient {
         presence_penalty: options.presencePenalty,
         response_format: options.responseFormat,
         tools: options.tools,
+        tool_choice: options.toolChoice,
+        ...options.providerOptions,
       }),
     }, false)
 
@@ -332,6 +334,12 @@ export class TCloudClient {
         stream: true,
         stop: options.stop,
         top_p: options.topP,
+        frequency_penalty: options.frequencyPenalty,
+        presence_penalty: options.presencePenalty,
+        response_format: options.responseFormat,
+        tools: options.tools,
+        tool_choice: options.toolChoice,
+        ...options.providerOptions,
       }),
     }, true)
 
