@@ -126,6 +126,51 @@ describe('Instance.start timeout cleanup (M2)', () => {
   }, 5_000)
 })
 
+describe('Instance.stop()', () => {
+  it('is idempotent — second call on a stopped instance returns without error', async () => {
+    const fake = writeFakeCargo(
+      [
+        `echo "Starting blueprint-manager for 'svc'"`,
+        `echo "Harness up. 1 blueprint started"`,
+        `sleep 30`,
+      ].join('\n'),
+    )
+
+    const instance = await Instance.start({
+      cargoBinary: fake,
+      quiet: true,
+      timeoutMs: 5_000,
+    })
+
+    await instance.stop(500)
+    expect(instance.isRunning).toBe(false)
+
+    // Second stop should resolve immediately without throwing
+    await instance.stop(500)
+    expect(instance.isRunning).toBe(false)
+  }, 10_000)
+
+  it('sets isRunning to false after stop', async () => {
+    const fake = writeFakeCargo(
+      [
+        `echo "Starting blueprint-manager for 'demo'"`,
+        `echo "Harness up. 1 blueprint started"`,
+        `sleep 30`,
+      ].join('\n'),
+    )
+
+    const instance = await Instance.start({
+      cargoBinary: fake,
+      quiet: true,
+      timeoutMs: 5_000,
+    })
+
+    expect(instance.isRunning).toBe(true)
+    await instance.stop(500)
+    expect(instance.isRunning).toBe(false)
+  }, 10_000)
+})
+
 describe('writeTempHarnessConfig uniqueness', () => {
   it('produces distinct paths on rapid successive calls', () => {
     const paths = new Set<string>()
