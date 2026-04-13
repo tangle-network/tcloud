@@ -906,6 +906,162 @@ export class TCloudClient {
       }
     })
   }
+
+  // ── Eval ──────────────────────────────────────────────────────────────
+
+  /** Run a quick eval — compare models on scenarios with LLM-as-judge scoring */
+  async eval(opts: {
+    models: string[]
+    scenarios: Array<{
+      id: string
+      prompt: string
+      rubric?: string
+      category?: string
+      expectedContains?: string[]
+      maxLatencyMs?: number
+    }>
+    judge?: string
+    iterations?: number
+    systemPrompt?: string
+  }): Promise<{
+    results: Array<{
+      model: string
+      judge: string
+      scenarios: Array<{
+        scenarioId: string
+        score: number
+        passed: boolean
+        response: string
+        judgeReasoning: string
+        timing: { totalMs: number }
+        tokens: { input: number; output: number }
+        cost: number
+        judgeCost: number
+      }>
+      summary: {
+        avgScore: number
+        passRate: number
+        totalCost: number
+        totalTokens: number
+        p50LatencyMs: number
+        p95LatencyMs: number
+        ci95: [number, number]
+        scoreStddev: number
+      }
+    }>
+  }> {
+    return this.request('/eval', { method: 'POST', body: JSON.stringify(opts) })
+  }
+
+  /** Create an eval suite for repeated runs */
+  async createSuite(opts: {
+    name: string
+    scenarios: Array<{ id: string; prompt: string; rubric?: string; category?: string }>
+    models: string[]
+    judge?: string
+    iterations?: number
+    systemPrompt?: string
+    tags?: string[]
+  }): Promise<{ suite: { id: string; name: string } }> {
+    return this.request('/eval/suites', { method: 'POST', body: JSON.stringify(opts) })
+  }
+
+  /** List eval suites */
+  async listSuites(): Promise<{ suites: Array<{ id: string; name: string; models: string[] }> }> {
+    return this.request('/eval/suites')
+  }
+
+  /** Run a suite */
+  async runSuite(suiteId: string, opts?: { baseline?: boolean; concurrency?: number }): Promise<any> {
+    return this.request(`/eval/suites/${suiteId}/runs`, { method: 'POST', body: JSON.stringify(opts || {}) })
+  }
+
+  /** List runs for a suite */
+  async listRuns(suiteId: string): Promise<any> {
+    return this.request(`/eval/suites/${suiteId}/runs`)
+  }
+
+  /** Get run detail */
+  async getRun(runId: string): Promise<any> {
+    return this.request(`/eval/runs/${runId}`)
+  }
+
+  /** Set a run as baseline for regression detection */
+  async setBaseline(runId: string): Promise<void> {
+    await this.request(`/eval/runs/${runId}`, { method: 'PATCH', body: JSON.stringify({ baseline: true }) })
+  }
+
+  // ── Sandbox ──────────────────────────────────────────────────────────
+
+  /** Get sandbox pricing for given resources */
+  async sandboxPricing(opts?: { cpu?: number; ram?: number; disk?: number }): Promise<{
+    pricing: { hourlyRate: number; perMinuteRate: number }
+    plan: string
+    limits: { maxCpu: number; maxRamGb: number; maxDiskGb: number }
+    balance: number
+    canAfford: { minutes: number; hours: number }
+  }> {
+    const params = new URLSearchParams()
+    if (opts?.cpu) params.set('cpu', String(opts.cpu))
+    if (opts?.ram) params.set('ram', String(opts.ram))
+    if (opts?.disk) params.set('disk', String(opts.disk))
+    return this.request(`/sandbox/pricing?${params}`)
+  }
+
+  /** Check if sandbox key is linked */
+  async sandboxStatus(): Promise<{ linked: boolean; keyPrefix?: string; gatewayUrl?: string }> {
+    return this.request('/sandbox/link-key')
+  }
+
+  /** Provision sandbox access */
+  async sandboxProvision(): Promise<{ provisioned: boolean; minutesRemaining?: number }> {
+    return this.request('/sandbox/provision', { method: 'POST' })
+  }
+
+  /** Create a sandbox session */
+  async sandboxCreate(opts: {
+    model?: string
+    harness?: 'claude-code' | 'codex' | 'opencode' | 'amp' | 'factory'
+    cpu?: number
+    ram?: number
+    storage?: number
+    gitUrl?: string
+    systemPrompt?: string
+  }): Promise<{ sessionId: string; harness: string; model: string; minutesRemaining?: number }> {
+    return this.request('/sandbox/sessions', { method: 'POST', body: JSON.stringify(opts) })
+  }
+
+  /** List sandbox sessions */
+  async sandboxList(): Promise<{ sessions: Array<{ id: string; status: string; model: string; harness: string }> }> {
+    return this.request('/sandbox/sessions')
+  }
+
+  /** Get sandbox stats */
+  async sandboxStats(sandboxId: string): Promise<{
+    config: { cpu: number; ramGb: number; diskGb: number }
+    uptime: number
+    computeMinutes: number
+    live?: { cpuPercent: number; memoryUsedMb: number; memoryTotalMb: number }
+  }> {
+    return this.request(`/sandbox/stats/${sandboxId}`)
+  }
+
+  /** Destroy a sandbox session */
+  async sandboxDestroy(sessionId: string): Promise<{ deleted: boolean }> {
+    return this.request(`/sandbox/sessions/${sessionId}`, { method: 'DELETE' })
+  }
+
+  // ── User Info ────────────────────────────────────────────────────────
+
+  /** Get user profile, balance, subscription, and usage breakdown */
+  async userInfo(): Promise<{
+    user: { id: string; email: string; name?: string }
+    balance: number
+    subscription: { plan: string; status: string } | null
+    usage: Record<string, { cost: number; count: number }>
+  }> {
+    return this.request('/auth/userinfo')
+  }
 }
 
 // ── Pricing helpers ──────────────────────────────────────────────────────
