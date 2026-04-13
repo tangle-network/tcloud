@@ -909,159 +909,80 @@ export class TCloudClient {
 
   // ── Eval ──────────────────────────────────────────────────────────────
 
-  /** Run a quick eval — compare models on scenarios with LLM-as-judge scoring */
+  private get _apiRoot() { return this.baseURL.replace(/\/v1$/, '') }
+
   async eval(opts: {
     models: string[]
-    scenarios: Array<{
-      id: string
-      prompt: string
-      rubric?: string
-      category?: string
-      expectedContains?: string[]
-      maxLatencyMs?: number
-    }>
-    judge?: string
-    iterations?: number
-    systemPrompt?: string
-  }): Promise<{
-    results: Array<{
-      model: string
-      judge: string
-      scenarios: Array<{
-        scenarioId: string
-        score: number
-        passed: boolean
-        response: string
-        judgeReasoning: string
-        timing: { totalMs: number }
-        tokens: { input: number; output: number }
-        cost: number
-        judgeCost: number
-      }>
-      summary: {
-        avgScore: number
-        passRate: number
-        totalCost: number
-        totalTokens: number
-        p50LatencyMs: number
-        p95LatencyMs: number
-        ci95: [number, number]
-        scoreStddev: number
-      }
-    }>
-  }> {
-    return this.request('/eval', { method: 'POST', body: JSON.stringify(opts) })
+    scenarios: Array<{ id: string; prompt: string; rubric?: string; category?: string; expectedContains?: string[]; maxLatencyMs?: number }>
+    judge?: string; iterations?: number; systemPrompt?: string
+  }): Promise<{ results: Array<{ model: string; summary: any; scenarios: any[] }> }> {
+    return this._request(`${this._apiRoot}/api/eval`, { method: 'POST', body: JSON.stringify(opts) })
   }
 
-  /** Create an eval suite for repeated runs */
-  async createSuite(opts: {
-    name: string
-    scenarios: Array<{ id: string; prompt: string; rubric?: string; category?: string }>
-    models: string[]
-    judge?: string
-    iterations?: number
-    systemPrompt?: string
-    tags?: string[]
-  }): Promise<{ suite: { id: string; name: string } }> {
-    return this.request('/eval/suites', { method: 'POST', body: JSON.stringify(opts) })
+  async createSuite(opts: { name: string; scenarios: Array<{ id: string; prompt: string; rubric?: string }>; models: string[]; judge?: string; iterations?: number; tags?: string[] }): Promise<{ suite: { id: string; name: string } }> {
+    return this._request(`${this._apiRoot}/api/eval/suites`, { method: 'POST', body: JSON.stringify(opts) })
   }
 
-  /** List eval suites */
   async listSuites(): Promise<{ suites: Array<{ id: string; name: string; models: string[] }> }> {
-    return this.request('/eval/suites')
+    return this._fetch(`${this._apiRoot}/api/eval/suites`)
   }
 
-  /** Run a suite */
   async runSuite(suiteId: string, opts?: { baseline?: boolean; concurrency?: number }): Promise<any> {
-    return this.request(`/eval/suites/${suiteId}/runs`, { method: 'POST', body: JSON.stringify(opts || {}) })
+    return this._request(`${this._apiRoot}/api/eval/suites/${suiteId}/runs`, { method: 'POST', body: JSON.stringify(opts || {}) })
   }
 
-  /** List runs for a suite */
   async listRuns(suiteId: string): Promise<any> {
-    return this.request(`/eval/suites/${suiteId}/runs`)
+    return this._fetch(`${this._apiRoot}/api/eval/suites/${suiteId}/runs`)
   }
 
-  /** Get run detail */
   async getRun(runId: string): Promise<any> {
-    return this.request(`/eval/runs/${runId}`)
+    return this._fetch(`${this._apiRoot}/api/eval/runs/${runId}`)
   }
 
-  /** Set a run as baseline for regression detection */
   async setBaseline(runId: string): Promise<void> {
-    await this.request(`/eval/runs/${runId}`, { method: 'PATCH', body: JSON.stringify({ baseline: true }) })
+    await this._request(`${this._apiRoot}/api/eval/runs/${runId}`, { method: 'PATCH', body: JSON.stringify({ baseline: true }) })
   }
 
   // ── Sandbox ──────────────────────────────────────────────────────────
 
-  /** Get sandbox pricing for given resources */
-  async sandboxPricing(opts?: { cpu?: number; ram?: number; disk?: number }): Promise<{
-    pricing: { hourlyRate: number; perMinuteRate: number }
-    plan: string
-    limits: { maxCpu: number; maxRamGb: number; maxDiskGb: number }
-    balance: number
-    canAfford: { minutes: number; hours: number }
-  }> {
-    const params = new URLSearchParams()
-    if (opts?.cpu) params.set('cpu', String(opts.cpu))
-    if (opts?.ram) params.set('ram', String(opts.ram))
-    if (opts?.disk) params.set('disk', String(opts.disk))
-    return this.request(`/sandbox/pricing?${params}`)
+  async sandboxPricing(opts?: { cpu?: number; ram?: number; disk?: number }): Promise<{ pricing: { hourlyRate: number; perMinuteRate: number }; plan: string; limits: { maxCpu: number; maxRamGb: number; maxDiskGb: number }; balance: number; canAfford: { minutes: number; hours: number } }> {
+    const p = new URLSearchParams()
+    if (opts?.cpu) p.set('cpu', String(opts.cpu))
+    if (opts?.ram) p.set('ram', String(opts.ram))
+    if (opts?.disk) p.set('disk', String(opts.disk))
+    return this._fetch(`${this._apiRoot}/api/sandbox/pricing?${p}`)
   }
 
-  /** Check if sandbox key is linked */
   async sandboxStatus(): Promise<{ linked: boolean; keyPrefix?: string; gatewayUrl?: string }> {
-    return this.request('/sandbox/link-key')
+    return this._fetch(`${this._apiRoot}/api/sandbox/link-key`)
   }
 
-  /** Provision sandbox access */
   async sandboxProvision(): Promise<{ provisioned: boolean; minutesRemaining?: number }> {
-    return this.request('/sandbox/provision', { method: 'POST' })
+    return this._request(`${this._apiRoot}/api/sandbox/provision`, { method: 'POST' })
   }
 
-  /** Create a sandbox session */
-  async sandboxCreate(opts: {
-    model?: string
-    harness?: 'claude-code' | 'codex' | 'opencode' | 'amp' | 'factory'
-    cpu?: number
-    ram?: number
-    storage?: number
-    gitUrl?: string
-    systemPrompt?: string
-  }): Promise<{ sessionId: string; harness: string; model: string; minutesRemaining?: number }> {
-    return this.request('/sandbox/sessions', { method: 'POST', body: JSON.stringify(opts) })
+  async sandboxCreate(opts: { model?: string; harness?: 'claude-code' | 'codex' | 'opencode' | 'amp' | 'factory'; cpu?: number; ram?: number; storage?: number; gitUrl?: string; systemPrompt?: string }): Promise<{ sessionId: string; harness: string; model: string; minutesRemaining?: number }> {
+    return this._request(`${this._apiRoot}/api/sandbox/sessions`, { method: 'POST', body: JSON.stringify(opts) })
   }
 
-  /** List sandbox sessions */
   async sandboxList(): Promise<{ sessions: Array<{ id: string; status: string; model: string; harness: string }> }> {
-    return this.request('/sandbox/sessions')
+    return this._fetch(`${this._apiRoot}/api/sandbox/sessions`)
   }
 
-  /** Get sandbox stats */
-  async sandboxStats(sandboxId: string): Promise<{
-    config: { cpu: number; ramGb: number; diskGb: number }
-    uptime: number
-    computeMinutes: number
-    live?: { cpuPercent: number; memoryUsedMb: number; memoryTotalMb: number }
-  }> {
-    return this.request(`/sandbox/stats/${sandboxId}`)
+  async sandboxStats(sandboxId: string): Promise<{ config: { cpu: number; ramGb: number; diskGb: number }; uptime: number; computeMinutes: number; live?: { cpuPercent: number; memoryUsedMb: number; memoryTotalMb: number } }> {
+    return this._fetch(`${this._apiRoot}/api/sandbox/stats/${sandboxId}`)
   }
 
-  /** Destroy a sandbox session */
   async sandboxDestroy(sessionId: string): Promise<{ deleted: boolean }> {
-    return this.request(`/sandbox/sessions/${sessionId}`, { method: 'DELETE' })
+    return this._request(`${this._apiRoot}/api/sandbox/sessions/${sessionId}`, { method: 'DELETE' })
   }
 
   // ── User Info ────────────────────────────────────────────────────────
 
-  /** Get user profile, balance, subscription, and usage breakdown */
-  async userInfo(): Promise<{
-    user: { id: string; email: string; name?: string }
-    balance: number
-    subscription: { plan: string; status: string } | null
-    usage: Record<string, { cost: number; count: number }>
-  }> {
-    return this.request('/auth/userinfo')
+  async userInfo(): Promise<{ user: { id: string; email: string; name?: string }; balance: number; subscription: { plan: string; status: string } | null; usage: Record<string, { cost: number; count: number }> }> {
+    return this._fetch(`${this._apiRoot}/api/auth/userinfo`)
   }
+
 }
 
 // ── Pricing helpers ──────────────────────────────────────────────────────
