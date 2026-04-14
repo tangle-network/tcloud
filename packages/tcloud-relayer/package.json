@@ -1,9 +1,17 @@
 {
-  "name": "tcloud-relayer",
+  "name": "@tangle-network/tcloud-relayer",
   "version": "0.1.0",
   "description": "Gas relayer — submits shielded withdrawal transactions on behalf of users",
   "type": "module",
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
     "dev": "tsx src/index.ts",
