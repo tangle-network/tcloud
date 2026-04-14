@@ -13,6 +13,7 @@ import { generateWallet, signSpendAuth, estimateCost, type ShieldedWallet } from
 import * as fs from 'fs'
 import * as path from 'path'
 import * as readline from 'readline'
+import { spawn } from 'child_process'
 
 const CONFIG_DIR = path.join(process.env.HOME || '~', '.tcloud')
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json')
@@ -93,38 +94,154 @@ program.command('config')
 
 const auth = program.command('auth').description('Authentication')
 
-auth.command('login').description('Log in via browser (device flow)').action(async () => {
-  const config = loadConfig()
+function openBrowser(url: string): boolean {
+  if (process.env.NO_BROWSER || process.env.CI) return false
+  if (!process.stdout.isTTY) return false
   try {
-    const res = await fetch(`${config.apiUrl}/api/auth/device`, { method: 'POST' })
-    if (!res.ok) { console.error('Auth server error'); process.exit(1) }
-    const d = await res.json() as any
-    console.log(`\n  Open: ${d.verification_url}\n  Code: ${d.user_code}\n\n  Waiting...`)
-    const deadline = Date.now() + (d.expires_in || 600) * 1000
+    const cmd = process.platform === 'darwin' ? 'open'
+      : process.platform === 'win32' ? 'start'
+      : 'xdg-open'
+    const child = spawn(cmd, [url], { stdio: 'ignore', detached: true })
+    child.unref()
+    return true
+  } catch { return false }
+}
+
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+
+async function runDeviceFlow(mode: 'signup' | 'login'): Promise<void> {
+  const config = loadConfig()
+
+  const initRes = await fetch(`${config.apiUrl}/api/auth/device`, { method: 'POST' })
+  if (!initRes.ok) {
+    console.error(`\n  ✗ Auth server returned ${initRes.status}.`)
+    process.exit(1)
+  }
+  const d = await initRes.json() as {
+    device_code: string; user_code: string; verification_url: string; expires_in: number; interval: number
+  }
+
+  // Deep-link the code into the URL so one click authenticates.
+  const urlWithCode = `${d.verification_url}?user_code=${encodeURIComponent(d.user_code)}`
+  const opened = openBrowser(urlWithCode)
+
+  // Turso-style presentation block
+  const header = mode === 'signup' ? 'Creating your Tangle account' : 'Signing you in'
+  console.log(`\n  ${header}\n`)
+  console.log(`  ${opened ? 'Browser opened:' : 'Open this URL:'}`)
+  console.log(`  ${urlWithCode}\n`)
+  console.log(`  Verification code: ${d.user_code}\n`)
+
+  const deadline = Date.now() + (d.expires_in || 600) * 1000
+  const interval = Math.max(2, d.interval || 5) * 1000
+  const spinnerEnabled = process.stdout.isTTY && !process.env.CI
+  let frame = 0
+
+  function tickSpinner() {
+    if (!spinnerEnabled) return
+    const remaining = Math.max(0, Math.round((deadline - Date.now()) / 1000))
+    process.stdout.write(`\r  ${SPINNER_FRAMES[frame++ % SPINNER_FRAMES.length]} waiting for browser confirmation (${remaining}s remaining)  `)
+  }
+
+  const spinnerTimer = spinnerEnabled ? setInterval(tickSpinner, 100) : null
+  try {
     while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, (d.interval || 5) * 1000))
+      await new Promise(r => setTimeout(r, interval))
       const r = await fetch(`${config.apiUrl}/api/auth/device/token`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ device_code: d.device_code }),
       })
-      const t = await r.json() as any
-      if (t.access_token) { config.apiKey = t.access_token; saveConfig(config); console.log('\n  Authenticated!'); return }
-      if (t.error === 'expired_token') { console.error('\n  Code expired.'); process.exit(1) }
-      process.stdout.write('.')
+      const t = await r.json() as { access_token?: string; error?: string }
+      if (t.access_token) {
+        config.apiKey = t.access_token
+        saveConfig(config)
+        if (spinnerTimer) { clearInterval(spinnerTimer); process.stdout.write('\r' + ' '.repeat(80) + '\r') }
+        console.log(`  ✓ Authenticated`)
+        console.log(`  ✓ API key saved to ${CONFIG_FILE}\n`)
+        console.log(`  Try it:`)
+        console.log(`    tcloud whoami`)
+        console.log(`    tcloud chat "hello world"\n`)
+        return
+      }
+      if (t.error === 'expired_token') {
+        if (spinnerTimer) { clearInterval(spinnerTimer); process.stdout.write('\r' + ' '.repeat(80) + '\r') }
+        console.error(`  ✗ Code expired. Run 'tcloud auth ${mode}' again.`)
+        process.exit(1)
+      }
     }
-    console.error('\n  Timed out.')
-  } catch (e: any) { console.error('Failed:', e.message) }
+    if (spinnerTimer) { clearInterval(spinnerTimer); process.stdout.write('\r' + ' '.repeat(80) + '\r') }
+    console.error(`  ✗ Timed out after ${Math.round((d.expires_in || 600) / 60)} minutes.`)
+    process.exit(1)
+  } finally {
+    if (spinnerTimer) clearInterval(spinnerTimer)
+  }
+}
+
+auth.command('signup').description('Create an account via browser (device flow)').action(() => runDeviceFlow('signup'))
+auth.command('login').description('Log in via browser (device flow)').action(() => runDeviceFlow('login'))
+
+auth.command('logout').description('Remove stored credentials').action(() => {
+  const c = loadConfig()
+  delete c.apiKey
+  saveConfig(c)
+  console.log(`  ✓ Logged out. Config kept at ${CONFIG_FILE}.`)
 })
 
 auth.command('set-key').description('Set API key directly').argument('<key>').action((key) => {
-  const c = loadConfig(); c.apiKey = key; saveConfig(c); console.log('API key saved.')
+  const c = loadConfig(); c.apiKey = key; saveConfig(c); console.log('  ✓ API key saved.')
 })
 
 auth.command('status').description('Show auth status').action(() => {
   const c = loadConfig()
-  console.log(c.apiKey ? `Authenticated: ${c.apiKey.slice(0, 15)}...` : 'Not authenticated')
+  console.log(c.apiKey ? `  ✓ Authenticated: ${c.apiKey.slice(0, 15)}...${c.apiKey.slice(-4)}` : '  ✗ Not authenticated. Run: tcloud auth signup')
   const w = loadWallets()
-  if (w.length) console.log(`Shielded wallets: ${w.length}`)
+  if (w.length) console.log(`  Shielded wallets: ${w.length}`)
+})
+
+auth.command('whoami').description('Show logged-in account details').action(async () => {
+  const c = loadConfig()
+  if (!c.apiKey) { console.log('  ✗ Not authenticated. Run: tcloud auth signup'); return }
+  try {
+    const res = await fetch(`${c.apiUrl}/api/auth/userinfo`, {
+      headers: { Authorization: `Bearer ${c.apiKey}` },
+    })
+    if (!res.ok) {
+      console.log(`  ✗ Auth check failed (${res.status}). Your key may be revoked — run: tcloud auth login`)
+      return
+    }
+    const me = await res.json() as any
+    const user = me.user ?? {}
+    const sub = me.subscription
+    console.log(`  Email:   ${user.email ?? 'n/a'}`)
+    console.log(`  User:    ${user.name ?? user.id ?? 'n/a'}`)
+    console.log(`  Plan:    ${sub?.plan ?? 'free'}`)
+    console.log(`  Balance: $${Number(me.balance ?? 0).toFixed(4)}`)
+    console.log(`  Key:     ${c.apiKey.slice(0, 15)}...${c.apiKey.slice(-4)}`)
+    console.log(`  API:     ${c.apiUrl}`)
+  } catch (e: any) {
+    console.log(`  ✗ ${e.message ?? e}`)
+  }
+})
+
+// Top-level aliases — turso-style ergonomics: `tcloud signup` works as well as `tcloud auth signup`.
+program.command('signup').description('Create an account via browser (alias for `auth signup`)').action(() => runDeviceFlow('signup'))
+program.command('login').description('Log in via browser (alias for `auth login`)').action(() => runDeviceFlow('login'))
+program.command('logout').description('Remove stored credentials (alias for `auth logout`)').action(() => {
+  const c = loadConfig(); delete c.apiKey; saveConfig(c)
+  console.log(`  ✓ Logged out.`)
+})
+program.command('whoami').description('Show logged-in account (alias for `auth whoami`)').action(async () => {
+  const c = loadConfig()
+  if (!c.apiKey) { console.log('  ✗ Not authenticated. Run: tcloud signup'); return }
+  try {
+    const res = await fetch(`${c.apiUrl}/api/auth/userinfo`, { headers: { Authorization: `Bearer ${c.apiKey}` } })
+    if (!res.ok) { console.log(`  ✗ Auth failed (${res.status}). Run: tcloud login`); return }
+    const me = await res.json() as any
+    const user = me.user ?? {}
+    const sub = me.subscription
+    console.log(`  ${user.email ?? user.name ?? user.id}  ·  $${Number(me.balance ?? 0).toFixed(4)}  ·  ${sub?.plan ?? 'free'}`)
+  } catch (e: any) { console.log(`  ✗ ${e.message ?? e}`) }
 })
 
 // ── wallet ──
