@@ -97,6 +97,7 @@ export type {
   RetryConfig,
   ChatMessage,
   ChatOptions,
+  GatewayOptions,
   ChatCompletion,
   ChatCompletionChunk,
   Model,

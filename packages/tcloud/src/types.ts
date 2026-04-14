@@ -257,6 +257,54 @@ export interface ChatMessage {
   name?: string
 }
 
+/** Gateway-level options for routing, compliance, and inference strategies. */
+export interface GatewayOptions {
+  /** BYOK: per-request provider credentials. Zero markup. */
+  byok?: Record<string, Array<{ apiKey?: string }>>
+  /** Route only through ZDR-verified providers. */
+  zeroDataRetention?: boolean
+  /** Route only through providers that don't train on prompts. */
+  disallowPromptTraining?: boolean
+  /** Inject cache_control markers for providers that need them. */
+  caching?: 'auto' | false
+  /** Provider priority order. */
+  order?: string[]
+  /** Restrict to these providers only. */
+  only?: string[]
+  /** Fallback model list tried in order. */
+  models?: string[]
+  /** Per-provider or global timeout (ms, clamped 1s–120s). */
+  timeout?: number | Record<string, number>
+  /** Smart routing hint. 'quality' auto-enables RSA. */
+  optimize?: 'cost' | 'latency' | 'quality'
+  /** Disable response cache for this request. */
+  cache?: boolean
+  /**
+   * RSA / MoA: population-based quality amplification.
+   * Spawns N parallel calls, aggregates K at a time, refines over T rounds.
+   * Add `models` for Mixture-of-Agents (diverse models per slot).
+   */
+  rsa?: {
+    n?: number
+    k?: number
+    t?: number
+    /** MoA: diverse models for generation (round-robin). Aggregation uses primary model. */
+    models?: string[]
+  }
+  /**
+   * Best-of-N: generate N candidates, score, return the winner.
+   * Scorer: webhook (your HTTP endpoint) or llm (LLM-as-judge).
+   */
+  bestOfN?: {
+    n?: number
+    /** Diverse models for generation (round-robin). */
+    models?: string[]
+    scorer:
+      | { type: 'webhook'; url: string; timeout?: number }
+      | { type: 'llm'; model: string; prompt: string }
+  }
+}
+
 export interface ChatOptions {
   /** Model to use */
   model?: string
@@ -282,6 +330,11 @@ export interface ChatOptions {
   tools?: any[]
   /** Tool choice strategy or specific tool */
   toolChoice?: 'none' | 'auto' | 'required' | { type: 'function'; function: { name: string } }
+  /**
+   * Gateway options: routing, compliance, inference strategies (RSA/MoA/Best-of-N).
+   * Sent as `body.gateway` to the Router.
+   */
+  gateway?: GatewayOptions
   /**
    * Provider-specific parameters passed through to the upstream API.
    * These are spread into the request body alongside standard fields.

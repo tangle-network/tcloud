@@ -386,6 +386,7 @@ export class TCloudClient {
       response_format: options.responseFormat,
       tools: options.tools,
       tool_choice: options.toolChoice,
+      ...(options.gateway ? { gateway: options.gateway } : {}),
       ...options.providerOptions,
     })
   }
