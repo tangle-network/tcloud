@@ -108,8 +108,11 @@ const DEFAULT_RETRY: Required<RetryConfig> = {
 
 const DEFAULT_TIMEOUT_MS = 60_000
 
+const DEFAULT_PLATFORM_URL = 'https://id.tangle.tools'
+
 export class TCloudClient {
   readonly baseURL: string
+  readonly platformURL: string
   readonly apiKey?: string
   readonly model: string
   private headers: Record<string, string>
@@ -127,6 +130,7 @@ export class TCloudClient {
 
   constructor(config: TCloudConfig = {}) {
     this.baseURL = (config.baseURL || DEFAULT_BASE_URL).replace(/\/$/, '')
+    this.platformURL = (config.platformURL || DEFAULT_PLATFORM_URL).replace(/\/$/, '')
     this.apiKey = config.apiKey || process.env.TCLOUD_API_KEY
     this.model = config.model || 'gpt-4o-mini'
     this.privacy = config.privacy
@@ -494,47 +498,80 @@ export class TCloudClient {
     return this._fetch(`${apiRoot}/api/operators`)
   }
 
+  // ── Billing (via id.tangle.tools) ──
+
   /** Get credit balance */
   async credits(): Promise<CreditBalance> {
-    const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    return this._fetch(`${apiRoot}/api/billing`)
+    const { data } = await this._fetch(`${this.platformURL}/v1/billing/balance`)
+    return data
   }
 
-  /** Add credits */
-  async addCredits(amount: number): Promise<{ balance: number }> {
-    const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    return this._fetch(`${apiRoot}/api/billing`, {
+  /** Add credits via Stripe checkout. Returns the checkout URL. */
+  async addCredits(amount: number): Promise<{ url: string }> {
+    const { data } = await this._fetch(`${this.platformURL}/v1/billing/topup`, {
       method: 'POST',
       body: JSON.stringify({ amount }),
     })
+    return data
   }
 
-  /** Create a new API key */
-  async createKey(name: string): Promise<{ key: string; id: string }> {
-    const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    return this._fetch(`${apiRoot}/api/keys`, {
+  /** Get transaction history */
+  async transactions(limit = 50): Promise<{ id: string; amount: number; type: string; product: string | null; description: string | null; createdAt: string }[]> {
+    const { data } = await this._fetch(`${this.platformURL}/v1/billing/transactions?limit=${limit}`)
+    return data
+  }
+
+  // ── API Keys (via id.tangle.tools) ──
+
+  /** Create a new API key. When called with an API key (not session),
+   * the new key is automatically a child of the calling key. */
+  async createKey(opts: {
+    name: string
+    product?: 'router' | 'sandbox' | 'evals' | 'blueprint-agent'
+    budgetUsd?: number
+    allowedModels?: string[]
+    rpmLimit?: number
+  }): Promise<{ key: string; id: string; prefix: string; budgetUsd: number | null }> {
+    const { data } = await this._fetch(`${this.platformURL}/v1/keys`, {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify(opts),
     })
+    return data
   }
 
-  /** List API keys */
-  async keys(): Promise<{ id: string; name: string; prefix: string; createdAt: string; lastUsedAt: string | null }[]> {
-    const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    return this._fetch(`${apiRoot}/api/keys`)
+  /** List API keys. Pass children=true to list child keys of the calling key. */
+  async keys(opts?: { children?: boolean }): Promise<{ id: string; name: string; keyPrefix: string; product: string | null; budgetUsd: number | null; budgetSpent: number; createdAt: string; lastUsedAt: string | null }[]> {
+    const q = opts?.children ? '?children=true' : ''
+    const { data } = await this._fetch(`${this.platformURL}/v1/keys${q}`)
+    return data
   }
 
   /** Revoke an API key */
   async revokeKey(id: string): Promise<void> {
-    const apiRoot = this.baseURL.replace(/\/v1$/, '')
-    const res = await proxiedFetch(this.privacy, `${apiRoot}/api/keys/${id}`, {
-      method: 'DELETE',
-      headers: this.headers,
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
-    }
+    await this._fetch(`${this.platformURL}/v1/keys/${id}`, { method: 'DELETE' })
+  }
+
+  /** Rotate an API key — creates new key with same config, revokes old */
+  async rotateKey(id: string): Promise<{ newKey: { key: string; id: string; prefix: string }; revokedKeyId: string }> {
+    const { data } = await this._fetch(`${this.platformURL}/v1/keys/${id}/rotate`, { method: 'POST' })
+    return data
+  }
+
+  // ── Projects (via id.tangle.tools) ──
+
+  /** Create a project for usage attribution */
+  async createProject(name: string, product?: string): Promise<{ id: string; name: string }> {
+    const { data } = await this._fetch(`${this.platformURL}/v1/projects`, {
+      method: 'POST',
+      body: JSON.stringify({ name, product }),
+    })
+    return data
+  }
+
+  /** List projects */
+  async projects(): Promise<{ id: string; name: string; product: string | null; createdAt: string }[]> {
+    const { data } = await this._fetch(`${this.platformURL}/v1/projects`)
+    return data
   }
 
   /** Generate embeddings */

@@ -3,6 +3,8 @@
 export interface TCloudConfig {
   /** API base URL (default: https://router.tangle.tools/v1) */
   baseURL?: string
+  /** Platform API URL for billing/keys (default: https://id.tangle.tools) */
+  platformURL?: string
   /** API key for standard (non-private) mode */
   apiKey?: string
   /** Default model */
