@@ -375,7 +375,10 @@ credits.command('add').description('Add credits').argument('<amount>').action(as
   const client = getClient()
   try {
     const data = await client.addCredits(parseFloat(amount))
-    console.log(`Credits added. New balance: $${data.balance.toFixed(4)}`)
+    if (data.url) {
+      console.log(`Checkout URL: ${data.url}`)
+      console.log('Complete payment to add credits.')
+    }
   } catch (e: any) { console.error('Error:', e.message) }
 })
 

@@ -35,6 +35,10 @@ import type {
   AvatarJobStatus,
   JobEvent,
   WatchJobOptions,
+  CreateKeyOptions,
+  CreatedKey,
+  ApiKeyInfo,
+  UpdateKeyOptions,
 } from './types'
 import { PrivateRouter, type OperatorInfo } from './private-router'
 
@@ -502,13 +506,13 @@ export class TCloudClient {
 
   /** Get credit balance */
   async credits(): Promise<CreditBalance> {
-    const { data } = await this._fetch(`${this.platformURL}/v1/billing/balance`)
+    const { data } = await this._fetch<{ data: CreditBalance }>(`${this.platformURL}/v1/billing/balance`)
     return data
   }
 
   /** Add credits via Stripe checkout. Returns the checkout URL. */
   async addCredits(amount: number): Promise<{ url: string }> {
-    const { data } = await this._fetch(`${this.platformURL}/v1/billing/topup`, {
+    const { data } = await this._fetch<{ data: { url: string } }>(`${this.platformURL}/v1/billing/topup`, {
       method: 'POST',
       body: JSON.stringify({ amount }),
     })
@@ -517,43 +521,65 @@ export class TCloudClient {
 
   /** Get transaction history */
   async transactions(limit = 50): Promise<{ id: string; amount: number; type: string; product: string | null; description: string | null; createdAt: string }[]> {
-    const { data } = await this._fetch(`${this.platformURL}/v1/billing/transactions?limit=${limit}`)
+    const { data } = await this._fetch<{ data: { id: string; amount: number; type: string; product: string | null; description: string | null; createdAt: string }[] }>(`${this.platformURL}/v1/billing/transactions?limit=${limit}`)
     return data
   }
 
   // ── API Keys (via id.tangle.tools) ──
 
-  /** Create a new API key. When called with an API key (not session),
-   * the new key is automatically a child of the calling key. */
-  async createKey(opts: {
-    name: string
-    product?: 'router' | 'sandbox' | 'evals' | 'blueprint-agent'
-    budgetUsd?: number
-    allowedModels?: string[]
-    rpmLimit?: number
-  }): Promise<{ key: string; id: string; prefix: string; budgetUsd: number | null }> {
-    const { data } = await this._fetch(`${this.platformURL}/v1/keys`, {
+  /**
+   * Create a new API key.
+   * When called with an API key (not session), the new key is automatically
+   * a child of the calling key — enabling hierarchical key delegation.
+   *
+   * Pass `parentKeyId` explicitly to create a child of a specific key.
+   * Child keys inherit the parent's product scope, allowedModels, and rpmLimit
+   * if not specified. Budget cannot exceed the parent's remaining budget.
+   */
+  async createKey(opts: CreateKeyOptions): Promise<CreatedKey> {
+    const { data } = await this._fetch<{ data: CreatedKey }>(`${this.platformURL}/v1/keys`, {
       method: 'POST',
       body: JSON.stringify(opts),
     })
     return data
   }
 
-  /** List API keys. Pass children=true to list child keys of the calling key. */
-  async keys(opts?: { children?: boolean }): Promise<{ id: string; name: string; keyPrefix: string; product: string | null; budgetUsd: number | null; budgetSpent: number; createdAt: string; lastUsedAt: string | null }[]> {
-    const q = opts?.children ? '?children=true' : ''
-    const { data } = await this._fetch(`${this.platformURL}/v1/keys${q}`)
+  /** Get a single API key by ID */
+  async getKey(id: string): Promise<ApiKeyInfo> {
+    const { data } = await this._fetch<{ data: ApiKeyInfo }>(`${this.platformURL}/v1/keys/${id}`)
     return data
   }
 
-  /** Revoke an API key */
+  /**
+   * List API keys.
+   * Pass `children: true` to list child keys of the calling API key.
+   */
+  async keys(opts?: { children?: boolean }): Promise<ApiKeyInfo[]> {
+    const q = opts?.children ? '?children=true' : ''
+    const { data } = await this._fetch<{ data: ApiKeyInfo[] }>(`${this.platformURL}/v1/keys${q}`)
+    return data
+  }
+
+  /**
+   * Update an API key's limits.
+   * Can adjust budget, allowedModels, rpmLimit, expiresAt, and name.
+   */
+  async updateKey(id: string, updates: UpdateKeyOptions): Promise<ApiKeyInfo> {
+    const { data } = await this._fetch<{ data: ApiKeyInfo }>(`${this.platformURL}/v1/keys/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    })
+    return data
+  }
+
+  /** Revoke an API key. If the key has children, they are also revoked recursively. */
   async revokeKey(id: string): Promise<void> {
     await this._fetch(`${this.platformURL}/v1/keys/${id}`, { method: 'DELETE' })
   }
 
   /** Rotate an API key — creates new key with same config, revokes old */
-  async rotateKey(id: string): Promise<{ newKey: { key: string; id: string; prefix: string }; revokedKeyId: string }> {
-    const { data } = await this._fetch(`${this.platformURL}/v1/keys/${id}/rotate`, { method: 'POST' })
+  async rotateKey(id: string): Promise<{ newKey: CreatedKey; revokedKeyId: string }> {
+    const { data } = await this._fetch<{ data: { newKey: CreatedKey; revokedKeyId: string } }>(`${this.platformURL}/v1/keys/${id}/rotate`, { method: 'POST' })
     return data
   }
 
@@ -561,7 +587,7 @@ export class TCloudClient {
 
   /** Create a project for usage attribution */
   async createProject(name: string, product?: string): Promise<{ id: string; name: string }> {
-    const { data } = await this._fetch(`${this.platformURL}/v1/projects`, {
+    const { data } = await this._fetch<{ data: { id: string; name: string } }>(`${this.platformURL}/v1/projects`, {
       method: 'POST',
       body: JSON.stringify({ name, product }),
     })
@@ -570,7 +596,7 @@ export class TCloudClient {
 
   /** List projects */
   async projects(): Promise<{ id: string; name: string; product: string | null; createdAt: string }[]> {
-    const { data } = await this._fetch(`${this.platformURL}/v1/projects`)
+    const { data } = await this._fetch<{ data: { id: string; name: string; product: string | null; createdAt: string }[] }>(`${this.platformURL}/v1/projects`)
     return data
   }
 

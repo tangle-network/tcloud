@@ -127,6 +127,10 @@ export type {
   AvatarJobStatus,
   JobEvent,
   WatchJobOptions,
+  CreateKeyOptions,
+  CreatedKey,
+  ApiKeyInfo,
+  UpdateKeyOptions,
 } from './types'
 export type { ShieldedWallet } from './shielded'
 export { PrivateRouter, type PrivateRouterConfig, type RoutingStrategy, type OperatorInfo } from './private-router'

@@ -427,6 +427,57 @@ export interface CreditBalance {
   }[]
 }
 
+// ── API Key Types ──
+
+export interface CreateKeyOptions {
+  name: string
+  /** Explicit parent key ID. When omitted and calling with an API key,
+   * the new key is auto-parented to the calling key. */
+  parentKeyId?: string
+  product?: 'router' | 'sandbox' | 'evals' | 'blueprint-agent'
+  projectId?: string
+  budgetUsd?: number
+  allowedModels?: string[]
+  rpmLimit?: number
+  /** ISO 8601 datetime. Must be in the future. */
+  expiresAt?: string
+}
+
+export interface CreatedKey {
+  id: string
+  key: string
+  prefix: string
+  name: string
+  product: string | null
+  budgetUsd: number | null
+  budgetRemaining: number | null
+}
+
+export interface ApiKeyInfo {
+  id: string
+  keyPrefix: string
+  name: string
+  parentKeyId: string | null
+  product: string | null
+  projectId: string | null
+  budgetUsd: number | null
+  budgetSpent: number
+  allowedModels: string[] | null
+  rpmLimit: number | null
+  expiresAt: string | null
+  lastUsedAt: string | null
+  revokedAt: string | null
+  createdAt: string
+}
+
+export interface UpdateKeyOptions {
+  name?: string
+  budgetUsd?: number
+  allowedModels?: string[]
+  rpmLimit?: number | null
+  expiresAt?: string | null
+}
+
 /** Status event from an async job SSE stream */
 export interface JobEvent {
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled'
