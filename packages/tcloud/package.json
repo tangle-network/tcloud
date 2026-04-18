@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/tcloud",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "TypeScript SDK and CLI for Tangle AI Cloud — decentralized LLM inference",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -53,6 +53,7 @@
   "dependencies": {
     "@scure/bip32": "^2.0.1",
     "@scure/bip39": "^2.0.1",
+    "@tangle-network/sandbox": "file:../../../agent-dev-container/products/sandbox/sdk",
     "commander": "^13.0.0",
     "viem": "^2.0.0"
   },

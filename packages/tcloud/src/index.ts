@@ -134,3 +134,14 @@ export type {
 } from './types'
 export type { ShieldedWallet } from './shielded'
 export { PrivateRouter, type PrivateRouterConfig, type RoutingStrategy, type OperatorInfo } from './private-router'
+
+// Re-export agent profile types from sandbox SDK
+export type {
+  AgentProfile,
+  AgentProfilePrompt,
+  AgentProfileModelHints,
+  AgentProfilePermissionValue,
+  AgentProfileMcpServer,
+  AgentProfileResources,
+  AgentProfileCapabilities,
+} from '@tangle-network/sandbox'
