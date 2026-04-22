@@ -23,7 +23,7 @@ const UNLOCK = process.env.BRIDGE_UNLOCK!
 
 // ── 1. One-shot through Claude Code (Claude Max subscription) ──
 const claude = tcloud.bridge({
-  harness: 'claude',
+  harness: 'claude-code',
   model: 'sonnet',
   unlock: UNLOCK,
   resume: 'quickstart-claude',
@@ -33,7 +33,7 @@ console.log('claude:', await claude.ask('say hi in 3 words'))
 
 // ── 2. Kimi Code (Kimi For Coding subscription) — streaming ──
 const kimi = tcloud.bridge({
-  harness: 'kimi',
+  harness: 'kimi-code',
   model: 'kimi-for-coding',
   unlock: UNLOCK,
   resume: 'quickstart-kimi',

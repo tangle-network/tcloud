@@ -492,7 +492,7 @@ export class TCloudClient {
    * call.
    *
    * ```ts
-   * const kimi = tcloud.bridge({ harness: 'kimi', model: 'kimi-for-coding', unlock: UNLOCK, resume: 'pr-42' })
+   * const kimi = tcloud.bridge({ harness: 'kimi-code', model: 'kimi-for-coding', unlock: UNLOCK, resume: 'pr-42' })
    * await kimi.ask('review this diff…')
    * for await (const chunk of kimi.stream('continue…')) process.stdout.write(chunk)
    * ```
@@ -1123,7 +1123,7 @@ const ALL_TIERS: TierConfig[] = [
  *
  * ```ts
  * const tcloud = new TCloudClient({ apiKey, baseURL: 'https://router.tangle.tools/api' })
- * const kimi = tcloud.bridge({ harness: 'kimi', model: 'kimi-for-coding', unlock: UNLOCK, resume: 'pr-42' })
+ * const kimi = tcloud.bridge({ harness: 'kimi-code', model: 'kimi-for-coding', unlock: UNLOCK, resume: 'pr-42' })
  *
  * // one-shot
  * const reply = await kimi.ask('summarize this diff')
