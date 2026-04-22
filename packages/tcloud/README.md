@@ -62,6 +62,40 @@ const answer = await client.ask('What is Tangle Network?') // string
 console.log(answer)
 ```
 
+### Quick Start — direct cli-bridge (subscription-backed coding harness)
+
+When you have your own [cli-bridge](https://github.com/drewstone/cli-bridge) running (locally or on your own VPS), point the SDK straight at it. cli-bridge is OpenAI-compatible (`/v1/chat/completions`) so chat / ask / askStream work unchanged — and your CLI subscriptions on the bridge box pay for the LLM tokens directly (no router, no per-token billing).
+
+```bash
+# 1. clone + run cli-bridge (one terminal)
+gh repo clone drewstone/cli-bridge && cd cli-bridge
+echo "BRIDGE_BEARER=$(openssl rand -hex 32)" >> .env.local
+echo "BRIDGE_BACKENDS=claude,passthrough"     >> .env.local
+export $(grep -v '^#' .env.local | xargs) && pnpm exec tsx src/server.ts
+
+# 2. authenticate your harness CLI
+claude /login    # or: kimi login, codex login, opencode auth login
+```
+
+```ts
+import { TCloudClient } from '@tangle-network/tcloud'
+
+const client = TCloudClient.fromCliBridge({
+  url: 'http://127.0.0.1:3344',           // or any reachable URL
+  bearer: process.env.CLI_BRIDGE_BEARER!, // value of BRIDGE_BEARER from .env.local
+})
+
+// model id = `<harness>/<model>` — no `bridge/` prefix in direct mode
+const reply = await client.ask('reply with OK', 'claude-code/sonnet')
+
+// streaming + full chat work the same
+for await (const chunk of client.askStream('write a haiku', 'kimi-code/kimi-for-coding')) {
+  process.stdout.write(chunk)
+}
+```
+
+See [`examples/14-direct-cli-bridge.ts`](./examples/14-direct-cli-bridge.ts) for the full pattern. For session-resumable agentic dispatches (file edits, multi-turn coding), see [`examples/12-bridge-sessions.ts`](./examples/12-bridge-sessions.ts) which uses the router-mediated `tcloud.bridge({...})` API.
+
 ### Model Selection
 
 Model is set at client creation. Override per-request when needed:
