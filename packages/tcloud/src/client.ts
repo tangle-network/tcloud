@@ -141,6 +141,45 @@ export class TCloudClient {
   private _operatorsCachedAt = 0
   private static readonly OPERATORS_TTL_MS = 5 * 60 * 1000
 
+  /**
+   * Build a client pointed directly at a cli-bridge instance — skips the
+   * Tangle Router entirely. cli-bridge serves the OpenAI-compatible
+   * `/v1/chat/completions` endpoint natively, so chat() / ask() /
+   * chatStream() work as-is against any local or remote bridge.
+   *
+   * Use this when you have your own cli-bridge running (locally or on
+   * your own VPS) and don't need router-side gating, billing, or
+   * observability — your CLI subscriptions on the bridge box pay for
+   * the LLM tokens directly.
+   *
+   * Wire form: model id is `<harness>/<model>` (e.g. `claude-code/sonnet`,
+   * `kimi-code/kimi-for-coding`) — no `bridge/` prefix needed in direct
+   * mode; cli-bridge accepts the harness id as the first path segment.
+   *
+   * ```ts
+   * const client = TCloudClient.fromCliBridge({
+   *   url: 'http://127.0.0.1:3344',
+   *   bearer: process.env.CLI_BRIDGE_BEARER!,
+   * })
+   * const reply = await client.ask('explain X', 'claude-code/sonnet')
+   * ```
+   *
+   * For session-resumable agentic dispatches (file edits, multi-turn
+   * coding), use the router-mediated `tcloud.bridge({...})` API instead
+   * (or POST to cli-bridge directly with `session_id` in the body).
+   */
+  static fromCliBridge(opts: {
+    /** cli-bridge base URL — `http://127.0.0.1:3344` for default local; can be any reachable URL. */
+    url: string
+    /** BRIDGE_BEARER from the cli-bridge's `.env.local`. */
+    bearer: string
+    /** Optional config passthrough (timeout, retry, etc). */
+    config?: Omit<TCloudConfig, 'apiKey' | 'baseURL'>
+  }): TCloudClient {
+    const baseURL = opts.url.replace(/\/+$/, '') + '/v1'
+    return new TCloudClient({ ...(opts.config ?? {}), apiKey: opts.bearer, baseURL })
+  }
+
   constructor(config: TCloudConfig = {}) {
     this.baseURL = (config.baseURL || DEFAULT_BASE_URL).replace(/\/$/, '')
     this.platformURL = (config.platformURL || DEFAULT_PLATFORM_URL).replace(/\/$/, '')
