@@ -88,7 +88,7 @@ export class TCloud extends TCloudClient {
 }
 
 // Re-export everything
-export { TCloudClient, TCloudError, type PricingTier, type TierConfig } from './client'
+export { TCloudClient, TCloudError, BridgeSession, type PricingTier, type TierConfig } from './client'
 export { createShieldedClient, generateWallet, signSpendAuth, estimateCost } from './shielded'
 export type {
   TCloudConfig,
@@ -98,6 +98,7 @@ export type {
   ChatMessage,
   ChatOptions,
   GatewayOptions,
+  BridgeOptions,
   ChatCompletion,
   ChatCompletionChunk,
   Model,

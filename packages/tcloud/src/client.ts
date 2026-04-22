@@ -11,6 +11,8 @@ import type {
   ChatOptions,
   ChatCompletion,
   ChatCompletionChunk,
+  ChatMessage,
+  BridgeOptions,
   Model,
   Operator,
   CreditBalance,
@@ -353,10 +355,14 @@ export class TCloudClient {
   }
 
   /**
-   * Prepare headers for chat requests — operator routing + SpendAuth.
+   * Prepare headers for chat requests — operator routing + SpendAuth +
+   * bridge short-circuit headers when `options.bridge` is set.
    * Shared between chat() and chatStream() to eliminate duplication.
    */
-  private async _prepareChatRequest(model: string): Promise<{ headers: Record<string, string>; baseURL: string }> {
+  private async _prepareChatRequest(
+    model: string,
+    bridge?: BridgeOptions,
+  ): Promise<{ headers: Record<string, string>; baseURL: string }> {
     const headers = { ...this.headers }
 
     if (this.spendAuthFn) {
@@ -376,13 +382,33 @@ export class TCloudClient {
       }
     }
 
+    if (bridge) {
+      headers['X-Bridge-Unlock'] = bridge.unlock
+      if (bridge.resume) headers['X-Resume'] = bridge.resume
+      if (bridge.bridgeUrl) headers['X-Bridge-Url'] = bridge.bridgeUrl
+      if (bridge.bridgeBearer) headers['X-Bridge-Bearer'] = bridge.bridgeBearer
+    }
+
     return { headers, baseURL }
+  }
+
+  /**
+   * Resolve the effective model string. When a bridge is set, rewrite to
+   * `bridge/<harness>/<model>` (or `bridge/<harness>` if no model).
+   */
+  private _effectiveModel(options: ChatOptions): string {
+    if (options.bridge) {
+      return options.bridge.model
+        ? `bridge/${options.bridge.harness}/${options.bridge.model}`
+        : `bridge/${options.bridge.harness}`
+    }
+    return options.model || this.model
   }
 
   /** Build the chat completions request body */
   private _chatBody(options: ChatOptions, stream: boolean): string {
     return JSON.stringify({
-      model: options.model || this.model,
+      model: this._effectiveModel(options),
       messages: options.messages,
       temperature: options.temperature,
       max_tokens: options.maxTokens,
@@ -402,7 +428,10 @@ export class TCloudClient {
   /** Chat completion (non-streaming) */
   async chat(options: ChatOptions): Promise<ChatCompletion> {
     this.checkLimits()
-    const { headers, baseURL } = await this._prepareChatRequest(options.model || this.model)
+    const { headers, baseURL } = await this._prepareChatRequest(
+      this._effectiveModel(options),
+      options.bridge,
+    )
 
     const res = await this._doFetch(`${baseURL}/chat/completions`, {
       method: 'POST',
@@ -419,7 +448,10 @@ export class TCloudClient {
   async *chatStream(options: ChatOptions): AsyncGenerator<ChatCompletionChunk> {
     this.checkLimits()
     this._requestCount++
-    const { headers, baseURL } = await this._prepareChatRequest(options.model || this.model)
+    const { headers, baseURL } = await this._prepareChatRequest(
+      this._effectiveModel(options),
+      options.bridge,
+    )
 
     const res = await this._doFetch(`${baseURL}/chat/completions`, {
       method: 'POST',
@@ -451,6 +483,25 @@ export class TCloudClient {
         } catch {}
       }
     }
+  }
+
+  /**
+   * Bridge — scoped helper for a subscription-backed CLI harness behind
+   * the Tangle Router's cli-bridge. Returns a mini-client bound to
+   * (harness, unlock, resume) so you don't thread those through every
+   * call.
+   *
+   * ```ts
+   * const kimi = tcloud.bridge({ harness: 'kimi', model: 'kimi-for-coding', unlock: UNLOCK, resume: 'pr-42' })
+   * await kimi.ask('review this diff…')
+   * for await (const chunk of kimi.stream('continue…')) process.stdout.write(chunk)
+   * ```
+   *
+   * Sessions persist across process restarts — use the same `resume` id
+   * to land on the same CLI conversation (context intact, no replay tax).
+   */
+  bridge(cfg: BridgeOptions): BridgeSession {
+    return new BridgeSession(this, cfg)
   }
 
   /** Convenience: send a single message and get the text response */
@@ -1062,6 +1113,91 @@ const ALL_TIERS: TierConfig[] = [
 ]
 
 /** Select N evenly-spaced items, always including first and last. */
+/**
+ * BridgeSession — a chat client scoped to one bridge configuration.
+ *
+ * Instead of threading `{ harness, unlock, resume }` through every
+ * `chat()` call, create a session once and call `ask` / `stream` / `chat`
+ * on it. The session's `resume` id is stable across calls so follow-up
+ * turns land on the same CLI conversation.
+ *
+ * ```ts
+ * const tcloud = new TCloudClient({ apiKey, baseURL: 'https://router.tangle.tools/api' })
+ * const kimi = tcloud.bridge({ harness: 'kimi', model: 'kimi-for-coding', unlock: UNLOCK, resume: 'pr-42' })
+ *
+ * // one-shot
+ * const reply = await kimi.ask('summarize this diff')
+ *
+ * // streaming
+ * for await (const chunk of kimi.stream('continue…')) process.stdout.write(chunk)
+ *
+ * // full OpenAI-shaped request
+ * const completion = await kimi.chat({ messages, temperature: 0.2 })
+ *
+ * // new resume id for a different logical conversation
+ * const kimiOther = kimi.withResume('ticket-123')
+ * ```
+ */
+export class BridgeSession {
+  constructor(private readonly client: TCloudClient, private readonly cfg: BridgeOptions) {}
+
+  /** Full chat completion (non-streaming). */
+  async chat(options: Omit<ChatOptions, 'bridge'>): Promise<ChatCompletion> {
+    return this.client.chat({ ...options, bridge: this.cfg })
+  }
+
+  /** Stream OpenAI chat.completion.chunks. */
+  chatStream(options: Omit<ChatOptions, 'bridge'>): AsyncGenerator<ChatCompletionChunk> {
+    return this.client.chatStream({ ...options, bridge: this.cfg })
+  }
+
+  /** One-shot: send a string, get the assistant text. */
+  async ask(message: string, extra?: Omit<Partial<ChatOptions>, 'bridge' | 'messages'>): Promise<string> {
+    const completion = await this.chat({
+      messages: [{ role: 'user', content: message }],
+      ...extra,
+    })
+    return completion.choices[0]?.message?.content || ''
+  }
+
+  /** One-shot: send a string, stream text deltas. */
+  async *stream(message: string, extra?: Omit<Partial<ChatOptions>, 'bridge' | 'messages'>): AsyncGenerator<string> {
+    for await (const chunk of this.chatStream({
+      messages: [{ role: 'user', content: message }],
+      ...extra,
+    })) {
+      const content = chunk.choices?.[0]?.delta?.content
+      if (content) yield content
+    }
+  }
+
+  /** Turn-based: send full message history, get assistant text. */
+  async turn(messages: ChatMessage[], extra?: Omit<Partial<ChatOptions>, 'bridge' | 'messages'>): Promise<string> {
+    const completion = await this.chat({ messages, ...extra })
+    return completion.choices[0]?.message?.content || ''
+  }
+
+  /** Clone with a new resume id — same harness, different logical conversation. */
+  withResume(resume: string): BridgeSession {
+    return new BridgeSession(this.client, { ...this.cfg, resume })
+  }
+
+  /** Clone with a different model inside the same harness. */
+  withModel(model: string): BridgeSession {
+    return new BridgeSession(this.client, { ...this.cfg, model })
+  }
+
+  /** The effective model id that will land on the router (`bridge/<harness>/<model>`). */
+  get model(): string {
+    return this.cfg.model ? `bridge/${this.cfg.harness}/${this.cfg.model}` : `bridge/${this.cfg.harness}`
+  }
+
+  /** The resume id currently bound to this session, if any. */
+  get resume(): string | undefined {
+    return this.cfg.resume
+  }
+}
+
 export function selectTiers(all: TierConfig[], n: number): TierConfig[] {
   if (n >= all.length) return [...all]
   if (n <= 1) return [all[0]]

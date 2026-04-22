@@ -307,6 +307,37 @@ export interface GatewayOptions {
   }
 }
 
+/**
+ * Bridge options — route a single chat call through the Tangle Router's
+ * cli-bridge short-circuit. The bridge drives subscription-backed CLIs
+ * (Claude Code, Codex, Kimi Code, opencode) as OpenAI-compatible
+ * harnesses with persistent session resume.
+ *
+ * When `bridge` is set, the client:
+ *   1. Rewrites `model` to `bridge/<harness>/<model>` (or `bridge/<harness>`
+ *      if no model is given — uses the harness default)
+ *   2. Injects `X-Bridge-Unlock` with the caller's unlock token
+ *   3. Injects `X-Resume` so follow-up calls with the same id resume
+ *      the CLI's native session (no re-tokenizing prior turns)
+ *   4. Optionally injects BYOB headers `X-Bridge-Url` + `X-Bridge-Bearer`
+ *      if the caller wants to target their own cli-bridge instance
+ *      (requires the router to be deployed with CLI_BRIDGE_BYOB_ENABLED)
+ */
+export interface BridgeOptions {
+  /** Which harness to drive. Picks the backend on the bridge. */
+  harness: 'claude' | 'claudish' | 'codex' | 'opencode' | 'kimi' | 'openai' | 'anthropic' | 'moonshot' | 'zai'
+  /** Model id inside the harness (e.g. `sonnet`, `kimi-for-coding`, `gpt-5-codex`). Omit for harness default. */
+  model?: string
+  /** Router-issued unlock token. Required unless operator has disabled the gate. */
+  unlock: string
+  /** Stable caller-owned id for session resume. Map one id per logical conversation. */
+  resume?: string
+  /** BYOB: point at your own cli-bridge instance. Router must have BYOB enabled. */
+  bridgeUrl?: string
+  /** BYOB: bearer your cli-bridge expects. */
+  bridgeBearer?: string
+}
+
 export interface ChatOptions {
   /** Model to use */
   model?: string
@@ -343,6 +374,12 @@ export interface ChatOptions {
    * Example: `{ thinking: { type: 'enabled', budget_tokens: 8000 } }`
    */
   providerOptions?: Record<string, unknown>
+  /**
+   * Route this call through the Tangle Router's cli-bridge short-circuit.
+   * See {@link BridgeOptions}. When set, `model` is rewritten to
+   * `bridge/<harness>/<model>` and bridge headers are injected.
+   */
+  bridge?: BridgeOptions
 }
 
 export interface ChatCompletion {
