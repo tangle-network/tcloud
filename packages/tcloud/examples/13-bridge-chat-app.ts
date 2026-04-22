@@ -9,15 +9,15 @@
  * Run:
  *   TCLOUD_API_KEY=sk-tan-... \
  *   BRIDGE_UNLOCK=... \
- *   HARNESS=kimi MODEL=kimi-for-coding \
+ *   HARNESS=kimi-code MODEL=kimi-for-coding \
  *   npx tsx examples/13-bridge-chat-app.ts
  */
 
 import { TCloudClient } from '@tangle-network/tcloud'
 import readline from 'node:readline/promises'
 
-const HARNESS = (process.env.HARNESS ?? 'claude') as
-  'claude' | 'claudish' | 'codex' | 'opencode' | 'kimi'
+const HARNESS = (process.env.HARNESS ?? 'claude-code') as
+  'claude-code' | 'claudish' | 'codex' | 'opencode' | 'kimi-code'
 const MODEL = process.env.MODEL // optional; falls back to harness default
 const RESUME = process.env.RESUME ?? `chat-${Date.now()}`
 
