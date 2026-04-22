@@ -46,6 +46,13 @@ import { PrivateRouter, type OperatorInfo } from './private-router'
 
 const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
 
+/** SDK version surfaced on the X-Tangle-Client header. Kept in source so the
+ * CJS/ESM build doesn't need a runtime package.json read — update alongside
+ * package.json version bumps. A build-time sync from package.json is a
+ * reasonable follow-up, but this single-source-of-truth approach works
+ * without bundler/ESM assert-json complexity. */
+const SDK_VERSION = '0.4.0'
+
 /**
  * Route a fetch call through the configured privacy proxy.
  * - direct: standard fetch
@@ -146,7 +153,7 @@ export class TCloudClient {
 
     this.headers = {
       'Content-Type': 'application/json',
-      'X-Tangle-Client': 'tcloud-sdk/0.2.0',
+      'X-Tangle-Client': `tcloud-sdk/${SDK_VERSION}`,
     }
 
     if (this.apiKey) {

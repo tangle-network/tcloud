@@ -9,7 +9,7 @@
  * Run:
  *   TCLOUD_API_KEY=sk-tan-... \
  *   BRIDGE_UNLOCK=... \
- *   HARNESS=kimi MODEL=kimi-for-coding \
+ *   HARNESS=kimi-code MODEL=kimi-for-coding \
  *   npx tsx examples/13-bridge-chat-app.ts
  */
 
