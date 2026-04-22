@@ -91,13 +91,13 @@ describe('credits()', () => {
   beforeEach(() => { originalFetch = globalThis.fetch })
   afterEach(() => { globalThis.fetch = originalFetch })
 
-  it('calls /api/billing', async () => {
-    const fn = mockFetch({ balance: 100, transactions: [] })
+  it('calls id.tangle.tools /v1/billing/balance and unwraps { data }', async () => {
+    const fn = mockFetch({ data: { balance: 100, transactions: [] } })
     globalThis.fetch = fn
     const client = new TCloudClient({ apiKey: 'sk-tan-test' })
     const result = await client.credits()
     expect(result.balance).toBe(100)
-    expect(fn.mock.calls[0][0]).toBe('https://router.tangle.tools/api/billing')
+    expect(fn.mock.calls[0][0]).toBe('https://id.tangle.tools/v1/billing/balance')
   })
 })
 
@@ -106,12 +106,13 @@ describe('addCredits()', () => {
   beforeEach(() => { originalFetch = globalThis.fetch })
   afterEach(() => { globalThis.fetch = originalFetch })
 
-  it('posts amount to /api/billing', async () => {
-    const fn = mockFetch({ balance: 150 })
+  it('posts amount to id.tangle.tools /v1/billing/topup and returns checkout URL', async () => {
+    const fn = mockFetch({ data: { url: 'https://checkout.stripe.com/xyz' } })
     globalThis.fetch = fn
     const client = new TCloudClient({ apiKey: 'sk-tan-test' })
     const result = await client.addCredits(50)
-    expect(result.balance).toBe(150)
+    expect(result.url).toBe('https://checkout.stripe.com/xyz')
+    expect(fn.mock.calls[0][0]).toBe('https://id.tangle.tools/v1/billing/topup')
     const body = JSON.parse(fn.mock.calls[0][1].body)
     expect(body.amount).toBe(50)
   })
@@ -122,31 +123,33 @@ describe('API key management', () => {
   beforeEach(() => { originalFetch = globalThis.fetch })
   afterEach(() => { globalThis.fetch = originalFetch })
 
-  it('createKey() posts to /api/keys', async () => {
-    const fn = mockFetch({ key: 'sk-tan-new', id: 'key-1' })
+  it('createKey() posts to id.tangle.tools /v1/keys and unwraps { data }', async () => {
+    const fn = mockFetch({ data: { key: 'sk-tan-new', id: 'key-1' } })
     globalThis.fetch = fn
     const client = new TCloudClient({ apiKey: 'sk-tan-test' })
-    const result = await client.createKey('sandbox-prod')
+    const result = await client.createKey({ name: 'sandbox-prod' })
     expect(result.key).toBe('sk-tan-new')
+    expect(fn.mock.calls[0][0]).toBe('https://id.tangle.tools/v1/keys')
     const body = JSON.parse(fn.mock.calls[0][1].body)
     expect(body.name).toBe('sandbox-prod')
   })
 
-  it('keys() fetches /api/keys', async () => {
-    const fn = mockFetch([{ id: 'k1', name: 'test', prefix: 'sk-tan-te', createdAt: '2024-01-01', lastUsedAt: null }])
+  it('keys() fetches id.tangle.tools /v1/keys and unwraps { data }', async () => {
+    const fn = mockFetch({ data: [{ id: 'k1', name: 'test', prefix: 'sk-tan-te', createdAt: '2024-01-01', lastUsedAt: null }] })
     globalThis.fetch = fn
     const client = new TCloudClient({ apiKey: 'sk-tan-test' })
     const result = await client.keys()
     expect(result).toHaveLength(1)
     expect(result[0].name).toBe('test')
+    expect(fn.mock.calls[0][0]).toBe('https://id.tangle.tools/v1/keys')
   })
 
-  it('revokeKey() deletes /api/keys/:id', async () => {
+  it('revokeKey() deletes id.tangle.tools /v1/keys/:id', async () => {
     const fn = mockFetch({})
     globalThis.fetch = fn
     const client = new TCloudClient({ apiKey: 'sk-tan-test' })
     await client.revokeKey('key-1')
-    expect(fn.mock.calls[0][0]).toBe('https://router.tangle.tools/api/keys/key-1')
+    expect(fn.mock.calls[0][0]).toBe('https://id.tangle.tools/v1/keys/key-1')
     expect(fn.mock.calls[0][1].method).toBe('DELETE')
   })
 })
