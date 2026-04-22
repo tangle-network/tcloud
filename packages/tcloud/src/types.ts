@@ -325,7 +325,7 @@ export interface GatewayOptions {
  */
 export interface BridgeOptions {
   /** Which harness to drive. Picks the backend on the bridge. */
-  harness: 'claude-code' | 'claudish' | 'codex' | 'opencode' | 'kimi-code' | 'openai' | 'anthropic' | 'moonshot' | 'zai'
+  harness: 'claude-code' | 'claudish' | 'codex' | 'opencode' | 'kimi-code' | 'sandbox' | 'openai' | 'anthropic' | 'moonshot' | 'zai'
   /** Model id inside the harness (e.g. `sonnet`, `kimi-for-coding`, `gpt-5-codex`). Omit for harness default. */
   model?: string
   /** Router-issued unlock token. Required unless operator has disabled the gate. */
