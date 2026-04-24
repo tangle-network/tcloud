@@ -1,0 +1,38 @@
+{
+  "name": "@tangle-network/tcloud-attestation",
+  "version": "0.1.0",
+  "description": "Fail-closed attestation parsing and policy checks for Tangle TEE sandboxes",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "test": "vitest run",
+    "check-types": "tsc --noEmit"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
