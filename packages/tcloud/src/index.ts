@@ -35,7 +35,7 @@
  * ```
  */
 
-import { TCloudClient, TCloudError } from './client'
+import { TCloudClient, TCloudError, type RotatingClientConfig } from './client'
 import { createShieldedClient, generateWallet } from './shielded'
 import type { TCloudConfig, ShieldedConfig } from './types'
 
@@ -77,6 +77,22 @@ export class TCloud extends TCloudClient {
   }
 
   /**
+   * Create a client that rotates operators per call.
+   * See {@link TCloudClient.rotating} for semantics.
+   *
+   * ```ts
+   * const client = TCloud.rotating({
+   *   apiKey: process.env.TCLOUD_API_KEY,
+   *   routing: { strategy: 'min-exposure' },
+   * })
+   * const stats = client.getRotationStats()
+   * ```
+   */
+  static rotating(config?: RotatingClientConfig): TCloudClient {
+    return TCloudClient.rotating(config)
+  }
+
+  /**
    * Generate a new ephemeral wallet (without creating a client).
    *
    * ```ts
@@ -88,7 +104,16 @@ export class TCloud extends TCloudClient {
 }
 
 // Re-export everything
-export { TCloudClient, TCloudError, BridgeSession, type PricingTier, type TierConfig } from './client'
+export {
+  TCloudClient,
+  TCloudError,
+  BridgeSession,
+  type PricingTier,
+  type TierConfig,
+  type RotatingClientConfig,
+  type RotatingRoutingConfig,
+  type RotationStats,
+} from './client'
 export { createShieldedClient, generateWallet, signSpendAuth, estimateCost } from './shielded'
 export type {
   TCloudConfig,

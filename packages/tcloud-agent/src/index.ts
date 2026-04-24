@@ -1,22 +1,23 @@
 /**
- * tcloud-agent — Private AI Agent with operator rotation
+ * tcloud-agent — Agent run-loop primitive + Tangle tool provider.
  *
  * ```ts
- * import { PrivateAgent } from 'tcloud-agent'
+ * import { TCloud } from '@tangle-network/tcloud'
+ * import { agent } from '@tangle-network/tcloud-agent'
  *
- * const agent = new PrivateAgent({
- *   apiUrl: 'https://router.tangle.tools/v1',
- *   routing: { strategy: 'min-exposure' },
- * })
- * await agent.init()
- *
- * const response = await agent.chat('Hello privately')
- * console.log(agent.getPrivacyStats())
+ * const client = new TCloud({ apiKey: process.env.TCLOUD_API_KEY! })
+ * const result = await agent(client, {
+ *   profile: 'sf-proposer',
+ *   brief: 'Scaffold a package and confirm it builds.',
+ *   criteria: [{ name: 'passed', check: async (c) => ({ ok: c.lastMessage.includes('ok') }) }],
+ * }).runUntil()
  * ```
+ *
+ * For per-call operator rotation (the ex-`PrivateAgent` use case) use
+ * `TCloudClient.rotating()` from `@tangle-network/tcloud` directly — it's
+ * a client, not an agent.
  */
 
-export { PrivateAgent, type PrivateAgentConfig, type ConversationMessage } from './agent'
-export { PrivateRouter, type PrivateRouterConfig, type OperatorInfo, type RoutingStrategy } from './private-router'
 export { TangleToolProvider, type CapabilityHandler, type ToolResult } from './tool-provider'
 export {
   Agent,

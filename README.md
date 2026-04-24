@@ -92,21 +92,21 @@ const client = new TCloud({
 })
 ```
 
-## Private Agent
+## Rotating client
 
 ```ts
-import { PrivateAgent } from 'tcloud-agent'
+import { TCloud } from '@tangle-network/tcloud'
 
-const agent = new PrivateAgent({
-  apiUrl: 'https://router.tangle.tools/v1',
+const client = TCloud.rotating({
+  apiKey: process.env.TCLOUD_API_KEY,
   routing: { strategy: 'min-exposure' },
 })
-await agent.init()
-const response = await agent.chat('Hello privately')
-console.log(agent.getPrivacyStats())
+await client.ask('Hello privately')
+console.log(client.getRotationStats())
+// { callsByOperator: { 'op-a': 1 }, currentOperator: 'op-a' }
 ```
 
-Rotation strategies: `round-robin`, `random`, `geo-distributed`, `min-exposure`, `latency-aware`
+Rotation strategies: `round-robin`, `random`, `min-exposure` (per-call dispatch, stateless only — sandbox-harness sessions are rejected).
 
 ## CLI
 
@@ -129,9 +129,9 @@ npx tcloud credits balance           # check credits
   └── CLI — chat, models, operators, credits, wallet
 
 tcloud-agent
-  ├── PrivateAgent — operator rotation, wallet lifecycle, context summarization
-  ├── PrivateRouter — 5 strategies (round-robin, random, geo, min-exposure, latency)
-  └── Pi extension — tcloud_infer + tcloud_wallet tools (Pi 0.65+)
+  ├── Agent / agent() — run-until loop over the sandbox bridge
+  ├── TangleToolProvider — unified Tangle capability surface for Pi tools
+  └── Pi extension — tangle + tcloud_wallet tools (Pi 0.65+)
 ```
 
 ## License
