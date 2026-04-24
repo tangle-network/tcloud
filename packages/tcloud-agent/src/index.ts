@@ -10,7 +10,13 @@
  *   profile: 'sf-proposer',
  *   brief: 'Scaffold a package and confirm it builds.',
  *   criteria: [{ name: 'passed', check: async (c) => ({ ok: c.lastMessage.includes('ok') }) }],
- * }).runUntil()
+ * }).run()
+ *
+ * // Streaming surface — observe deltas + criterion checks as they happen:
+ * for await (const ev of agent(client, opts).stream()) {
+ *   if (ev.type === 'message.delta') process.stdout.write(ev.text)
+ *   if (ev.type === 'verdict')       console.log(`\n[${ev.verdict}]`)
+ * }
  * ```
  *
  * For per-call operator rotation (the ex-`PrivateAgent` use case) use
@@ -28,4 +34,8 @@ export {
   type AgentRunCriterion,
   type AgentRunVerdict,
   type AgentBudget,
+  type AgentEvent,
+  type TextPart,
+  type ToolPart,
+  type ToolState,
 } from './agent-runner'
