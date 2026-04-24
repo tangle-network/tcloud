@@ -17,10 +17,12 @@
   },
   "scripts": {
     "build": "tsup src/index.ts src/pi-extension.ts --format esm --clean",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@tangle-network/tcloud": "workspace:*",
+    "@tangle-network/sandbox": "^0.0.3",
     "@sinclair/typebox": "^0.34.0",
     "viem": "^2.0.0"
   },
@@ -31,7 +33,8 @@
   "devDependencies": {
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.2"
   },
   "files": ["dist", "src"],
   "license": "MIT"
