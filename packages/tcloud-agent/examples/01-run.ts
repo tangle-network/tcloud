@@ -1,5 +1,5 @@
 /**
- * Agent.runUntil — inline AgentProfile + completion gates.
+ * Agent.run — inline AgentProfile + completion gates.
  *
  * Brief: verify a scaffold by running `pnpm install`, then `tsc`, and return
  * an explicit pass/fail line. Budget-gated. No real sandbox required to read
@@ -7,7 +7,7 @@
  *
  * Run (router-mediated):
  *   TCLOUD_API_KEY=sk-tan-... BRIDGE_UNLOCK=... \
- *     npx tsx packages/tcloud-agent/examples/01-rununtil.ts
+ *     npx tsx packages/tcloud-agent/examples/01-run.ts
  */
 
 import { TCloud } from '@tangle-network/tcloud'
@@ -53,7 +53,7 @@ async function main() {
     budget: { iterations: 4, wallSec: 300 },
     unlock: process.env.BRIDGE_UNLOCK,
     resume: 'scaffold-verify-1',
-  }).runUntil()
+  }).run()
 
   console.log(`[${result.verdict}] iterations=${result.iterations} wall=${result.wallMs}ms`)
   if (result.blockedBy) console.log(`blocked by: ${result.blockedBy}`)

@@ -1,10 +1,18 @@
 /**
- * tcloud-agent — Agent (run-until) primitive
+ * tcloud-agent — Agent primitive (run + stream).
  *
  * A run-loop wrapper on top of `TCloudClient.bridge({ harness: 'sandbox', ... })`.
  * Feeds an initial brief, executes a sandbox agent turn, evaluates a list of
  * completion criteria, and iterates — feeding failure reasons back in — until
  * all criteria pass or a budget gate fires.
+ *
+ * Two consumer surfaces:
+ *
+ *   1. `agent(client, opts).run(): Promise<AgentRunResult>` — awaits the final
+ *      verdict.
+ *   2. `agent(client, opts).stream(): AsyncIterable<AgentEvent>` — observes
+ *      iterations, mid-iteration message deltas, criterion checks, and a
+ *      terminal `verdict` event. `run()` is a thin consumer of `stream()`.
  *
  * Usage:
  *
@@ -26,7 +34,7 @@
  *   ],
  *   budget: { iterations: 3, wallSec: 120 },
  *   unlock: process.env.BRIDGE_UNLOCK,
- * }).runUntil()
+ * }).run()
  * ```
  *
  * Design:
@@ -40,11 +48,50 @@
  *   drives the next iteration's user prompt. All-pass returns `verified`.
  * - Budget gates: `iterations` (count), `wallSec` (wall clock), `usd`
  *   (best-effort from `ChatCompletion.usage` when the upstream fills it in).
- * - Errors from the bridge are captured on the result, not thrown.
+ * - Errors from the bridge are captured as a `verdict: 'error'` event, not
+ *   thrown out of the iterable (same contract as `run()`).
  */
 
 import type { AgentProfile } from '@tangle-network/sandbox'
-import type { TCloudClient, BridgeSession, ChatCompletion, ChatMessage } from '@tangle-network/tcloud'
+import type { TCloudClient, BridgeSession, ChatCompletionChunk, ChatMessage } from '@tangle-network/tcloud'
+
+// ── Part types (wrappers over the sandbox SDK session-gateway shape) ─────────
+//
+// The sandbox SDK defines these in its `session-gateway/agent-connection.ts`
+// (and canonically in `@tangle-network/agent-interface`). That package isn't
+// published to the registry yet and `@tangle-network/sandbox@0.0.3` doesn't
+// re-export them, so we redeclare the minimal shape locally and re-export it
+// for consumers. When the interface package ships we can flip these to a
+// direct re-export without churning the consumer surface.
+
+/** Text delta emitted by the sandbox sidecar as the model streams tokens. */
+export interface TextPart {
+  type: 'text'
+  id: string
+  sessionID: string
+  messageID: string
+  text: string
+}
+
+/** Execution state for a single tool call. Mirrors the sandbox SDK union. */
+export interface ToolState {
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'error'
+  input?: Record<string, unknown>
+  output?: unknown
+  error?: string
+}
+
+/** Tool-call part emitted mid-iteration when the agent invokes a tool. */
+export interface ToolPart {
+  type: 'tool'
+  id: string
+  sessionID: string
+  messageID: string
+  tool: string
+  state: ToolState
+}
+
+// ── Run-loop domain types ────────────────────────────────────────────────────
 
 /** A completion gate evaluated after each assistant turn. */
 export interface AgentRunCriterion {
@@ -101,6 +148,15 @@ export interface AgentRunOptions {
   bridgeUrl?: string
   /** BYOB cli-bridge bearer — forwarded as `BridgeOptions.bridgeBearer`. */
   bridgeBearer?: string
+  /**
+   * Opt out of streaming. When `false`, each iteration calls `chat()` in
+   * non-streaming mode and the stream yields a single `message.delta` per
+   * iteration with the full assistant content. Default: `true`.
+   *
+   * Intended as an escape hatch for bridges or harnesses that don't support
+   * SSE cleanly; `run()` semantics are identical either way.
+   */
+  stream?: boolean
 }
 
 export type AgentRunVerdict = 'verified' | 'blocked' | 'budget-exhausted' | 'error'
@@ -119,23 +175,80 @@ export interface AgentRunResult {
   error?: string
 }
 
+/**
+ * Streaming event emitted by {@link Agent.stream}.
+ *
+ * Ordering within an iteration:
+ *   `iteration.start`
+ *   → `message.delta`* (zero or more; may interleave with tool events)
+ *   → (`tool.call.start` → `tool.call.result`)* (best-effort — see note below)
+ *   → `iteration.complete`
+ *   → `criterion.check`* (one per evaluated criterion)
+ *
+ * The final event of the stream is always a single `verdict` carrying the
+ * same payload that `run()` returns.
+ *
+ * Note on tool events: the router's current OpenAI-shaped chat-stream surface
+ * (`ChatCompletionChunk`) does not expose tool parts directly; `tool.call.*`
+ * events are reserved in the union so consumers can start branching on them,
+ * but they are only emitted today when the upstream bridge surfaces tool
+ * parts via a non-standard delta field. Most runs will see `iteration.*` +
+ * `message.delta` + `criterion.check` + `verdict` only.
+ */
+export type AgentEvent =
+  | { type: 'iteration.start';    iteration: number }
+  | { type: 'message.delta';      iteration: number; text: string }
+  | { type: 'tool.call.start';    iteration: number; tool: string; input: unknown }
+  | { type: 'tool.call.result';   iteration: number; tool: string; output: unknown; status: 'completed' | 'failed' | 'error' }
+  | { type: 'iteration.complete'; iteration: number; message: string }
+  | { type: 'criterion.check';    iteration: number; name: string; ok: boolean; reason?: string }
+  | { type: 'verdict';            verdict: AgentRunVerdict; iterations: number; wallMs: number; usd: number | null; transcript: AgentRunContext['transcript']; blockedBy?: string; error?: string }
+
 /** Bridge surface the runner depends on — keeps tests fake-able. */
 type BridgeClient = Pick<TCloudClient, 'bridge'>
 
 /**
- * Run-loop around a sandbox-harness BridgeSession. The run loop itself is in
- * {@link Agent.runUntil}; prefer the {@link agent} factory for call-sites.
+ * Run-loop around a sandbox-harness BridgeSession.
+ *
+ * - {@link Agent.run} returns `Promise<AgentRunResult>` — awaits the final
+ *   verdict.
+ * - {@link Agent.stream} returns `AsyncIterable<AgentEvent>` — observes
+ *   iterations, message deltas, criterion checks, and a terminal `verdict`.
+ *
+ * `run()` is a thin consumer of `stream()` — the loop logic lives once, in
+ * `stream()`.
  */
 export class Agent {
   constructor(private readonly client: BridgeClient, private readonly options: AgentRunOptions) {}
 
-  /** Execute the loop. Never throws; failures are captured on the result. */
-  async runUntil(): Promise<AgentRunResult> {
+  /**
+   * Execute the loop and return the final verdict. Never throws; failures
+   * are captured on the result as `verdict: 'error'`.
+   */
+  async run(): Promise<AgentRunResult> {
+    let verdictEvent: (AgentEvent & { type: 'verdict' }) | null = null
+    for await (const ev of this.stream()) {
+      if (ev.type === 'verdict') verdictEvent = ev
+    }
+    if (!verdictEvent) {
+      throw new Error('Agent.stream() ended without emitting a verdict event')
+    }
+    const { type: _t, ...rest } = verdictEvent
+    return rest as AgentRunResult
+  }
+
+  /**
+   * Execute the loop and yield {@link AgentEvent}s as the run progresses.
+   * Terminates with exactly one `verdict` event; errors surface as
+   * `verdict: 'error'`, not a thrown exception out of the iterable.
+   */
+  async *stream(): AsyncIterable<AgentEvent> {
     const start = Date.now()
     const transcript: AgentRunContext['transcript'] = []
     const criteria = this.options.criteria ?? []
     const budget = this.options.budget ?? {}
     const maxIter = budget.iterations ?? 8
+    const wantStream = this.options.stream !== false
 
     const unlock = this.options.unlock ?? process.env.BRIDGE_UNLOCK ?? ''
     const isInline = typeof this.options.profile !== 'string'
@@ -160,68 +273,91 @@ export class Agent {
     let usd: number | null = null
     let blockedBy: string | undefined
 
+    const buildVerdict = (
+      verdict: AgentRunVerdict,
+      extra: { error?: string } = {},
+    ): AgentEvent & { type: 'verdict' } => ({
+      type: 'verdict',
+      verdict,
+      iterations: iteration,
+      wallMs: Date.now() - start,
+      usd,
+      transcript,
+      ...(blockedBy != null ? { blockedBy } : {}),
+      ...(extra.error != null ? { error: extra.error } : {}),
+    })
+
     while (iteration < maxIter) {
       iteration++
 
       // Wall-clock budget check BEFORE the expensive call — first breach exits.
       if (budget.wallSec != null && (Date.now() - start) / 1000 >= budget.wallSec) {
-        return {
+        // Pre-call breach: the current iteration number was just incremented
+        // but we haven't done the work. Report `iterations` as the last
+        // fully-executed iteration (iteration - 1).
+        yield {
+          type: 'verdict',
           verdict: 'budget-exhausted',
           iterations: iteration - 1,
           wallMs: Date.now() - start,
           usd,
           transcript,
-          blockedBy,
+          ...(blockedBy != null ? { blockedBy } : {}),
         }
+        return
       }
+
+      yield { type: 'iteration.start', iteration }
 
       const userMsg: ChatMessage = { role: 'user', content: nextUserTurn }
       transcript.push({ role: 'user', content: nextUserTurn })
 
-      let completion: ChatCompletion
+      let assistantContent = ''
       try {
-        completion = await session.chat({
-          messages: [userMsg],
-          ...(providerOptions ? { providerOptions } : {}),
-        })
-      } catch (err) {
-        return {
-          verdict: 'error',
-          iterations: iteration,
-          wallMs: Date.now() - start,
-          usd,
-          transcript,
-          error: err instanceof Error ? err.message : String(err),
+        if (wantStream) {
+          // Streaming path — accumulate deltas + yield them as they arrive.
+          const chunks = session.chatStream({
+            messages: [userMsg],
+            ...(providerOptions ? { providerOptions } : {}),
+          })
+          for await (const chunk of chunks) {
+            const delta = extractDelta(chunk)
+            if (delta) {
+              assistantContent += delta
+              yield { type: 'message.delta', iteration, text: delta }
+            }
+          }
+        } else {
+          // Non-streaming fallback — single full-message delta.
+          const completion = await session.chat({
+            messages: [userMsg],
+            ...(providerOptions ? { providerOptions } : {}),
+          })
+          assistantContent = completion.choices?.[0]?.message?.content ?? ''
+          if (assistantContent) {
+            yield { type: 'message.delta', iteration, text: assistantContent }
+          }
+          const priced = extractUsd(completion)
+          if (priced != null) usd = (usd ?? 0) + priced
         }
+      } catch (err) {
+        transcript.push({ role: 'assistant', content: assistantContent })
+        yield buildVerdict('error', {
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return
       }
 
-      const assistantContent = completion.choices?.[0]?.message?.content ?? ''
       transcript.push({ role: 'assistant', content: assistantContent })
-
-      // Best-effort USD from usage. Most sandbox runs won't emit price
-      // fields; leave usd at null when nothing comes back.
-      const priced = extractUsd(completion)
-      if (priced != null) usd = (usd ?? 0) + priced
+      yield { type: 'iteration.complete', iteration, message: assistantContent }
 
       if (budget.usd != null && usd != null && usd > budget.usd) {
-        return {
-          verdict: 'budget-exhausted',
-          iterations: iteration,
-          wallMs: Date.now() - start,
-          usd,
-          transcript,
-          blockedBy,
-        }
+        yield buildVerdict('budget-exhausted')
+        return
       }
       if (budget.wallSec != null && (Date.now() - start) / 1000 >= budget.wallSec) {
-        return {
-          verdict: 'budget-exhausted',
-          iterations: iteration,
-          wallMs: Date.now() - start,
-          usd,
-          transcript,
-          blockedBy,
-        }
+        yield buildVerdict('budget-exhausted')
+        return
       }
 
       const ctx: AgentRunContext = {
@@ -236,6 +372,13 @@ export class Agent {
       let failedName: string | undefined
       for (const c of criteria) {
         const out = await c.check(ctx)
+        yield {
+          type: 'criterion.check',
+          iteration,
+          name: c.name,
+          ok: out.ok,
+          ...(out.reason != null ? { reason: out.reason } : {}),
+        }
         if (!out.ok) {
           failedReason = out.reason ?? `criterion '${c.name}' failed`
           failedName = c.name
@@ -244,13 +387,8 @@ export class Agent {
       }
 
       if (!failedName) {
-        return {
-          verdict: 'verified',
-          iterations: iteration,
-          wallMs: Date.now() - start,
-          usd,
-          transcript,
-        }
+        yield buildVerdict('verified')
+        return
       }
 
       blockedBy = failedName
@@ -258,14 +396,7 @@ export class Agent {
     }
 
     // Iteration cap reached — distinguish from blocked by preserving blockedBy.
-    return {
-      verdict: 'budget-exhausted',
-      iterations: iteration,
-      wallMs: Date.now() - start,
-      usd,
-      transcript,
-      blockedBy,
-    }
+    yield buildVerdict('budget-exhausted')
   }
 }
 
@@ -274,13 +405,23 @@ export function agent(client: BridgeClient, options: AgentRunOptions): Agent {
   return new Agent(client, options)
 }
 
+/** Pull the text delta out of a ChatCompletionChunk. Tolerant of odd shapes. */
+function extractDelta(chunk: ChatCompletionChunk): string {
+  const content = chunk.choices?.[0]?.delta?.content
+  return typeof content === 'string' ? content : ''
+}
+
 /**
  * Pull a USD figure out of a ChatCompletion. Tangle's router surfaces
  * `usage.cost_usd` on priced operators; when it's absent we return null so
  * the caller can distinguish "$0" from "unknown".
+ *
+ * Kept around for the non-streaming path; the streaming SSE body doesn't
+ * carry usage fields on the final chunk today, so streamed runs report
+ * `usd: null` until the router surfaces usage on the final chunk.
  */
-function extractUsd(completion: ChatCompletion): number | null {
-  const usage = (completion as unknown as { usage?: { cost_usd?: number; costUsd?: number } }).usage
+function extractUsd(completion: { usage?: unknown }): number | null {
+  const usage = completion.usage as { cost_usd?: number; costUsd?: number } | undefined
   if (!usage) return null
   if (typeof usage.cost_usd === 'number') return usage.cost_usd
   if (typeof usage.costUsd === 'number') return usage.costUsd
