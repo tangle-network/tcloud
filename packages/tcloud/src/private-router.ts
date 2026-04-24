@@ -54,6 +54,8 @@ export class PrivateRouter {
   private usage: Map<string, OperatorUsage> = new Map()
   private currentIndex = 0
   private totalRequests = 0
+  /** Slug of the most-recently-selected operator. Populated on each selectOperator() hit. */
+  private _lastSelectedSlug: string | null = null
 
   constructor(config: Partial<PrivateRouterConfig> = {}) {
     this.config = {
@@ -224,6 +226,12 @@ export class PrivateRouter {
       requestCount: (existing?.requestCount || 0) + 1,
       lastUsedAt: Date.now(),
     })
+    this._lastSelectedSlug = op.slug
+  }
+
+  /** Slug of the most-recently-selected operator (null before the first call). */
+  get lastSelectedSlug(): string | null {
+    return this._lastSelectedSlug
   }
 
   private getLastUsedOperator(): OperatorInfo | null {

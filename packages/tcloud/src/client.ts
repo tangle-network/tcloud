@@ -42,7 +42,42 @@ import type {
   ApiKeyInfo,
   UpdateKeyOptions,
 } from './types'
-import { PrivateRouter, type OperatorInfo } from './private-router'
+import { PrivateRouter, type OperatorInfo, type RoutingStrategy } from './private-router'
+
+/** Non-enumerable marker set on clients constructed via {@link TCloudClient.rotating}. */
+const ROTATING_MARKER = '__tcloudRotating'
+
+/** Rotation knobs for {@link TCloudClient.rotating}. */
+export interface RotatingRoutingConfig {
+  /** Router strategy. Defaults to `'min-exposure'`. */
+  strategy?: Extract<RoutingStrategy, 'min-exposure' | 'round-robin' | 'random'>
+  /**
+   * Pre-seed the operator pool. When omitted the client fetches
+   * `/api/operators` on the first call (TTL-cached).
+   */
+  pool?: OperatorInfo[]
+  /** Minimum distinct operators required before routing proceeds. */
+  minOperators?: number
+  /** Max requests per operator before forced rotation. */
+  maxRequestsPerOperator?: number
+  /** Exclude specific operator slugs. */
+  excludeOperators?: string[]
+  /** Prefer specific regions (others kept as fallback). */
+  preferRegions?: string[]
+}
+
+/** Configuration accepted by {@link TCloudClient.rotating}. */
+export type RotatingClientConfig = Omit<TCloudConfig, 'routing'> & {
+  routing?: RotatingRoutingConfig
+}
+
+/** Rotation stats surfaced by {@link TCloudClient.getRotationStats}. */
+export interface RotationStats {
+  /** Per-operator call counter. */
+  callsByOperator: Record<string, number>
+  /** Slug of the most-recently-selected operator, if any. */
+  currentOperator: string | null
+}
 
 const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
 
@@ -178,6 +213,64 @@ export class TCloudClient {
   }): TCloudClient {
     const baseURL = opts.url.replace(/\/+$/, '') + '/v1'
     return new TCloudClient({ ...(opts.config ?? {}), apiKey: opts.bearer, baseURL })
+  }
+
+  /**
+   * Build a client that rotates which operator serves each call. Mirrors
+   * {@link TCloudClient.shielded} in shape: returns a standard `TCloudClient`
+   * that behaves identically for the OpenAI-compatible surface but
+   * dispatches each chat/completions/embeddings request through a
+   * {@link PrivateRouter} — different operator per call per the chosen
+   * strategy.
+   *
+   * ```ts
+   * const tcloud = TCloudClient.rotating({
+   *   apiKey: process.env.TCLOUD_API_KEY,
+   *   routing: { strategy: 'min-exposure' },
+   * })
+   * await tcloud.ask('hello')
+   * tcloud.getRotationStats() // { callsByOperator: { ... }, currentOperator: '…' }
+   * ```
+   *
+   * Rotation is meaningful only for stateless calls. Sandbox-harness
+   * sessions bind to a single operator for the lifetime of the session;
+   * `rotating()` clients refuse to dispatch them — see {@link bridge}.
+   */
+  static rotating(config: RotatingClientConfig = {}): TCloudClient {
+    const routing = config.routing ?? {}
+    const strategy: RoutingStrategy = routing.strategy ?? 'min-exposure'
+
+    // Build the bare client without the default-path `config.routing.strategy`
+    // handler in the constructor (that path wires a different RoutingConfig
+    // shape). We construct the PrivateRouter explicitly below.
+    const { routing: _omit, ...base } = config
+    const client = new TCloudClient(base as TCloudConfig)
+
+    const router = new PrivateRouter({
+      strategy,
+      minOperators: routing.minOperators ?? 1,
+      maxRequestsPerOperator: routing.maxRequestsPerOperator,
+      excludeOperators: routing.excludeOperators,
+      preferRegions: routing.preferRegions,
+    })
+    if (routing.pool && routing.pool.length > 0) {
+      router.setOperators(routing.pool)
+      // Bypass the TTL fetch — caller supplied the pool explicitly.
+      ;(client as unknown as { _cachedOperators: OperatorInfo[] })._cachedOperators = routing.pool
+      ;(client as unknown as { _operatorsCachedAt: number })._operatorsCachedAt = Date.now()
+    }
+    ;(client as unknown as { privateRouter: PrivateRouter }).privateRouter = router
+
+    // Mark the instance so the bridge guard can detect it without exposing
+    // a public flag on the public surface.
+    Object.defineProperty(client, ROTATING_MARKER, {
+      value: true,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    })
+
+    return client
   }
 
   constructor(config: TCloudConfig = {}) {
@@ -545,9 +638,41 @@ export class TCloudClient {
    *
    * Sessions persist across process restarts — use the same `resume` id
    * to land on the same CLI conversation (context intact, no replay tax).
+   *
+   * Guard: clients built via {@link TCloudClient.rotating} cannot dispatch
+   * sandbox-harness sessions (rotation rotates per call; a sandbox session
+   * binds to one operator). Attempting `bridge({ harness: 'sandbox' })` on
+   * a rotating client throws.
    */
   bridge(cfg: BridgeOptions): BridgeSession {
+    if (cfg.harness === 'sandbox' && (this as unknown as Record<string, unknown>)[ROTATING_MARKER] === true) {
+      throw new Error(
+        'TCloudClient.rotating() cannot dispatch sandbox-harness sessions.\n' +
+        'Sandbox sessions bind to a single operator; rotation is meaningful only for\n' +
+        'stateless calls. Use TCloudClient.shielded() + AgentProfile.confidential.tee\n' +
+        'for privacy-preserving sandbox execution instead.'
+      )
+    }
     return new BridgeSession(this, cfg)
+  }
+
+  /**
+   * Rotation stats — populated only on clients created via
+   * {@link TCloudClient.rotating}. Non-rotating clients return an empty
+   * counter and `currentOperator: null`.
+   */
+  getRotationStats(): RotationStats {
+    if (!this.privateRouter) {
+      return { callsByOperator: {}, currentOperator: null }
+    }
+    const callsByOperator: Record<string, number> = {}
+    for (const row of this.privateRouter.getStats().operatorBreakdown) {
+      callsByOperator[row.slug] = row.requests
+    }
+    return {
+      callsByOperator,
+      currentOperator: this.privateRouter.lastSelectedSlug,
+    }
   }
 
   /** Convenience: send a single message and get the text response */

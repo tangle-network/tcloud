@@ -1,7 +1,7 @@
 {
   "name": "@tangle-network/tcloud-agent",
-  "version": "0.1.0",
-  "description": "Private AI agent + Pi extension with operator rotation for Tangle AI Cloud",
+  "version": "0.3.0",
+  "description": "Agent run-loop primitive + Pi extension for Tangle AI Cloud",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
