@@ -12,8 +12,6 @@
     "isolatedModules": true,
     "noEmit": true
   },
-  "references": [
-    { "path": "./packages/tcloud" },
-    { "path": "./packages/tcloud-agent" }
-  ]
+  "include": ["packages/*/src/**/*.ts"],
+  "exclude": ["**/dist", "node_modules"]
 }

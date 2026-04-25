@@ -30,6 +30,16 @@
         "default": "./dist/attestation.cjs"
       }
     },
+    "./sandbox": {
+      "import": {
+        "types": "./dist/sandbox.d.ts",
+        "default": "./dist/sandbox.js"
+      },
+      "require": {
+        "types": "./dist/sandbox.d.cts",
+        "default": "./dist/sandbox.cjs"
+      }
+    },
     "./shielded": {
       "import": {
         "types": "./dist/shielded.d.ts",
@@ -54,7 +64,7 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts src/cli.ts src/shielded.ts src/instance.ts src/attestation.ts --format esm,cjs --dts --clean --external socks-proxy-agent",
+    "build": "tsup src/index.ts src/cli.ts src/shielded.ts src/instance.ts src/attestation.ts src/sandbox.ts --format esm,cjs --dts --clean --external socks-proxy-agent",
     "docs": "typedoc src/index.ts --out docs --name tcloud --readme README.md",
     "test": "vitest run",
     "dev": "tsx src/cli.ts",

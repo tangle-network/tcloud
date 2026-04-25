@@ -10,6 +10,7 @@
 import { Command } from 'commander'
 import { TCloud } from './index'
 import { generateWallet, signSpendAuth, estimateCost, type ShieldedWallet } from './shielded'
+import { TCloudSandbox, type TCloudSandboxTee } from './sandbox'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as readline from 'readline'
@@ -23,6 +24,7 @@ const WALLETS_FILE = path.join(CONFIG_DIR, 'wallets.json')
 
 interface CLIConfig {
   apiUrl: string
+  sandboxUrl?: string
   apiKey?: string
   defaultModel: string
   chainId: number
@@ -67,6 +69,28 @@ function getClient(opts?: { private?: boolean }): TCloud | ReturnType<typeof TCl
   return new TCloud({ baseURL: `${config.apiUrl}/v1`, apiKey: config.apiKey, model: config.defaultModel })
 }
 
+function requireApiKey(config: CLIConfig): string {
+  if (!config.apiKey) {
+    console.error('No API key. Run: tcloud login')
+    process.exit(1)
+  }
+  return config.apiKey
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  if (value == null) return undefined
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Expected a number, got ${String(value)}`)
+  }
+  return parsed
+}
+
+function teeType(value: string | undefined): TCloudSandboxTee | undefined {
+  if (!value) return undefined
+  return value.toLowerCase() as TCloudSandboxTee
+}
+
 // ─── CLI Setup ──────────────────────────────────────────────
 
 const program = new Command()
@@ -77,12 +101,14 @@ program.name('tcloud').description('Tangle AI Cloud CLI').version('0.1.0')
 program.command('config')
   .description('View or update configuration')
   .option('--api-url <url>', 'API base URL')
+  .option('--sandbox-url <url>', 'Sandbox API base URL')
   .option('--api-key <key>', 'API key')
   .option('--model <model>', 'Default model')
   .option('--chain <id>', 'Chain ID')
   .action((opts) => {
     const c = loadConfig()
     if (opts.apiUrl) c.apiUrl = opts.apiUrl
+    if (opts.sandboxUrl) c.sandboxUrl = opts.sandboxUrl
     if (opts.apiKey) c.apiKey = opts.apiKey
     if (opts.model) c.defaultModel = opts.model
     if (opts.chain) c.chainId = parseInt(opts.chain)
@@ -351,6 +377,76 @@ program.command('operators')
         console.log(`  ${o.slug.padEnd(20)} ${o.status.padEnd(10)} ${String(o.models.length).padEnd(3)} models  ${o.reputationScore}% rep  ${o.avgLatencyMs}ms`)
       )
     } catch (e: any) { console.error('Error:', e.message) }
+  })
+
+// ── sandbox ──
+
+const sandbox = program.command('sandbox').description('Sandbox workflows')
+
+sandbox.command('create')
+  .description('Create a sandbox')
+  .option('--name <name>', 'Sandbox name')
+  .option('--image <image>', 'Sandbox image or environment')
+  .option('--environment <environment>', 'Sandbox environment')
+  .option('--ssh', 'Enable SSH')
+  .option('--cpu <cores>', 'CPU cores')
+  .option('--memory <mb>', 'Memory in MB')
+  .option('--disk <gb>', 'Disk in GB')
+  .option('--git-url <url>', 'Git repository URL')
+  .option('--git-ref <ref>', 'Git ref')
+  .option('--backend <type>', 'Agent backend')
+  .option('--tee <type>', 'Require a TEE backend: any, tdx, nitro, sev-snp, phala-dstack, gcp, azure')
+  .option('--sealed', 'Require sealed secret support')
+  .option('--attestation-nonce <hex|auto>', 'Attach a caller challenge nonce')
+  .option('--verify', 'Verify returned attestation evidence')
+  .option('--allow-unverified-hardware', 'Allow structural attestation checks before vendor-root verification is available')
+  .option('--sandbox-url <url>', 'Sandbox API base URL')
+  .option('--json', 'Print JSON')
+  .action(async (opts) => {
+    try {
+      const config = loadConfig()
+      const client = new TCloudSandbox({
+        apiKey: requireApiKey(config),
+        baseUrl: opts.sandboxUrl ?? config.sandboxUrl,
+      })
+      const result = await client.create({
+        name: opts.name,
+        image: opts.image,
+        environment: opts.environment,
+        ssh: Boolean(opts.ssh),
+        cpu: optionalNumber(opts.cpu),
+        memoryMb: optionalNumber(opts.memory),
+        diskGb: optionalNumber(opts.disk),
+        gitUrl: opts.gitUrl,
+        gitRef: opts.gitRef,
+        backend: opts.backend,
+        tee: teeType(opts.tee),
+        sealed: Boolean(opts.sealed),
+        attestationNonce: opts.attestationNonce,
+        verify: Boolean(opts.verify),
+        attestationPolicy: {
+          allowUnverifiedHardware: Boolean(opts.allowUnverifiedHardware),
+        },
+      })
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2))
+        return
+      }
+
+      const box = result.sandbox as any
+      console.log(`Sandbox created: ${box.id ?? 'unknown'}`)
+      if (box.status) console.log(`Status: ${box.status}`)
+      if (opts.tee) {
+        console.log(`TEE: ${opts.tee}`)
+        console.log(`Attestation: ${result.attestation ? 'present' : 'not returned'}`)
+        if (result.attestationNonce) console.log(`Attestation nonce: ${result.attestationNonce}`)
+        if (result.verification) console.log(`Verification: ${result.verification.valid ? 'valid' : 'invalid'}`)
+      }
+    } catch (e: any) {
+      console.error('Error:', e.message)
+      process.exit(1)
+    }
   })
 
 // ── credits ──
