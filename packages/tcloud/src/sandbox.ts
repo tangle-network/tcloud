@@ -3,6 +3,8 @@ import { randomBytes } from 'node:crypto'
 import {
   type AttestationPolicy,
   type AttestationVerificationResult,
+  normalizeTeeType,
+  type TeeType,
   verifyAttestation,
 } from '@tangle-network/tcloud-attestation'
 
@@ -71,6 +73,7 @@ export class TCloudSandbox {
 
   async create(options: TCloudSandboxCreateOptions): Promise<TCloudSandboxCreateResult> {
     const effectiveVerify = shouldVerifyAttestation(options)
+    const attestationPolicy = buildAttestationPolicy(options)
     const createOptions = buildSandboxCreateOptions({
       ...options,
       verify: effectiveVerify,
@@ -97,7 +100,7 @@ export class TCloudSandbox {
 
     const verification = effectiveVerify
       ? verifyAttestation(attestation as any, {
-          ...options.attestationPolicy,
+          ...attestationPolicy,
           expectedNonce: createOptions.confidential?.attestationNonce,
         })
       : undefined
@@ -134,6 +137,10 @@ export function buildSandboxCreateOptions(options: TCloudSandboxCreateOptions): 
     ? generateAttestationNonce()
     : options.attestationNonce
 
+  if (attestationNonce) {
+    validateAttestationNonce(attestationNonce)
+  }
+
   return {
     name: options.name,
     environment: options.environment ?? options.image,
@@ -166,6 +173,54 @@ export function buildSandboxCreateOptions(options: TCloudSandboxCreateOptions): 
 
 export function shouldVerifyAttestation(options: Pick<TCloudSandboxCreateOptions, 'tee' | 'verify'>): boolean {
   return Boolean(options.tee || options.verify)
+}
+
+function buildAttestationPolicy(options: TCloudSandboxCreateOptions): Omit<AttestationPolicy, 'expectedNonce'> {
+  if (!options.tee || options.tee === 'any') return options.attestationPolicy ?? {}
+
+  const requestedTypes = acceptedAttestationTypesForTee(options.tee)
+  const acceptedTeeTypes = options.attestationPolicy?.acceptedTeeTypes
+
+  if (acceptedTeeTypes?.length && !acceptedTeeTypes.some(type => requestedTypes.includes(type))) {
+    throw new Error(
+      `TEE attestation policy does not accept requested TEE type ${options.tee}`,
+    )
+  }
+
+  return {
+    ...options.attestationPolicy,
+    acceptedTeeTypes: acceptedTeeTypes?.length
+      ? acceptedTeeTypes.filter(type => requestedTypes.includes(type))
+      : requestedTypes,
+  }
+}
+
+function acceptedAttestationTypesForTee(tee: TCloudSandboxTee): TeeType[] {
+  switch (tee) {
+    case 'phala-dstack':
+      return ['tdx', 'phala-dstack']
+    case 'gcp':
+      return ['tdx', 'sev-snp', 'gcp']
+    case 'azure':
+      return ['sev-snp', 'azure']
+    default:
+      return [normalizeTeeType(tee)]
+  }
+}
+
+function validateAttestationNonce(value: string): void {
+  const normalized = value.trim().toLowerCase().replace(/^0x/, '')
+  if (!/^[0-9a-f]+$/.test(normalized)) {
+    throw new Error('attestation nonce must be hex')
+  }
+  if (normalized.length % 2 !== 0) {
+    throw new Error('attestation nonce must have even hex length')
+  }
+
+  const bytes = normalized.length / 2
+  if (bytes < 32 || bytes > 64) {
+    throw new Error(`attestation nonce must be 32-64 bytes, got ${bytes}`)
+  }
 }
 
 function generateAttestationNonce(bytes = 32): string {

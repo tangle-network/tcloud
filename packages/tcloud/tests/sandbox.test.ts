@@ -55,6 +55,20 @@ describe('tcloud sandbox facade', () => {
     })).toThrow('TEE options require a tee value')
   })
 
+  it('rejects malformed caller nonce challenges before creation', () => {
+    expect(() => buildSandboxCreateOptions({
+      name: 'bad-nonce',
+      tee: 'tdx',
+      attestationNonce: '11',
+    })).toThrow('attestation nonce must be 32-64 bytes, got 1')
+
+    expect(() => buildSandboxCreateOptions({
+      name: 'bad-nonce',
+      tee: 'tdx',
+      attestationNonce: 'zz'.repeat(32),
+    })).toThrow('attestation nonce must be hex')
+  })
+
   it('generates a nonce when verification is requested', () => {
     const options = buildSandboxCreateOptions({
       name: 'verified',
