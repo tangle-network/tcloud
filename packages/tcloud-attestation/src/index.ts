@@ -116,16 +116,16 @@ export function verifyAttestation(
     }
   }
 
-  if (policy.expectedNonce) {
+  if (policy.expectedNonce != null) {
     const nonce = nonceReportData(policy.expectedNonce)
-    if (!containsSubarray(attestation.evidence, nonce)) {
+    if (!constantTimeContainsSubarray(attestation.evidence, nonce)) {
       errors.push('attestation evidence does not contain the expected nonce report data')
     }
   }
 
   if (!policy.allowUnverifiedHardware) {
     errors.push(
-      `vendor-root quote signature verification is not implemented for ${attestation.teeType}`,
+      `hardware quote signature verification is required but not implemented for ${attestation.teeType}; set allowUnverifiedHardware only after external verification`,
     )
   }
 
@@ -235,19 +235,17 @@ function normalizeHex(value: string): string {
   return normalized
 }
 
-function containsSubarray(haystack: Uint8Array, needle: Uint8Array): boolean {
+function constantTimeContainsSubarray(haystack: Uint8Array, needle: Uint8Array): boolean {
   if (needle.length === 0 || needle.length > haystack.length) return false
 
+  let found = 0
   for (let i = 0; i <= haystack.length - needle.length; i++) {
-    let matched = true
+    let diff = 0
     for (let j = 0; j < needle.length; j++) {
-      if (haystack[i + j] !== needle[j]) {
-        matched = false
-        break
-      }
+      diff |= haystack[i + j] ^ needle[j]
     }
-    if (matched) return true
+    found |= (diff - 1) >>> 31
   }
 
-  return false
+  return found === 1
 }
