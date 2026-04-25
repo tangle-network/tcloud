@@ -179,10 +179,12 @@ export type { ShieldedWallet } from './shielded'
 export { PrivateRouter, type PrivateRouterConfig, type RoutingStrategy, type OperatorInfo } from './private-router'
 export {
   assertAttestation,
+  createNitroHardwareVerifier,
   createSevSnpHardwareVerifier,
   createTdxHardwareVerifier,
   normalizeTeeType,
   parseAttestation,
+  parseNitroAttestationDocument,
   parseSevSnpReport,
   toHex,
   verifyAttestation,
@@ -195,6 +197,8 @@ export type {
   AttestationVerificationResult,
   HardwareVerifier,
   HardwareVerifierResult,
+  NitroAttestationDocument,
+  NitroVerifierOptions,
   ParsedAttestation,
   SevSnpReport,
   SevSnpVerifierOptions,
