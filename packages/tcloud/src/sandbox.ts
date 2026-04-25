@@ -1,11 +1,11 @@
 import { Sandbox } from '@tangle-network/sandbox'
 import { createHash, randomBytes } from 'node:crypto'
 import {
-  type AttestationPolicy,
+  type AsyncAttestationPolicy,
   type AttestationVerificationResult,
   normalizeTeeType,
   type TeeType,
-  verifyAttestation,
+  verifyAttestationAsync,
 } from '@tangle-network/tcloud-attestation'
 
 export type TCloudSandboxTee =
@@ -33,7 +33,7 @@ export interface TCloudSandboxCreateOptions {
   sealed?: boolean
   attestationNonce?: string | 'auto'
   verify?: boolean
-  attestationPolicy?: Omit<AttestationPolicy, 'expectedNonce'>
+  attestationPolicy?: Omit<AsyncAttestationPolicy, 'expectedNonce'>
 }
 
 export interface TCloudSandboxAttestationStatus {
@@ -74,7 +74,7 @@ export interface TCloudTeeAttestationHeartbeatOptions {
   immediate?: boolean
   continueOnFailure?: boolean
   sessionId?: string
-  attestationPolicy?: Omit<AttestationPolicy, 'expectedNonce'>
+  attestationPolicy?: Omit<AsyncAttestationPolicy, 'expectedNonce'>
   onSuccess?: (sample: TCloudTeeAttestationHeartbeatSample) => void
   onFailure?: (error: unknown) => void
 }
@@ -135,7 +135,7 @@ export class TCloudSandbox {
     }
 
     const verification = effectiveVerify
-      ? verifyAttestation(attestation as any, {
+      ? await verifyAttestationAsync(attestation as any, {
           ...attestationPolicy,
           expectedNonce: createOptions.confidential?.attestationNonce,
         })
@@ -224,7 +224,7 @@ export function startTeeAttestationHeartbeat(
       throw new Error('TEE attestation heartbeat returned no evidence')
     }
 
-    const verification = verifyAttestation(attestation as any, {
+    const verification = await verifyAttestationAsync(attestation as any, {
       ...policy,
       expectedNonce: challenge.nonce,
     })
@@ -345,7 +345,7 @@ export function shouldVerifyAttestation(options: Pick<TCloudSandboxCreateOptions
   return Boolean(options.tee || options.verify)
 }
 
-function buildAttestationPolicy(options: TCloudSandboxCreateOptions): Omit<AttestationPolicy, 'expectedNonce'> {
+function buildAttestationPolicy(options: TCloudSandboxCreateOptions): Omit<AsyncAttestationPolicy, 'expectedNonce'> {
   if (!options.tee || options.tee === 'any') return options.attestationPolicy ?? {}
 
   const requestedTypes = acceptedAttestationTypesForTee(options.tee)

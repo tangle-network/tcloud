@@ -177,6 +177,29 @@ export type {
 } from './types'
 export type { ShieldedWallet } from './shielded'
 export { PrivateRouter, type PrivateRouterConfig, type RoutingStrategy, type OperatorInfo } from './private-router'
+export {
+  assertAttestation,
+  createSevSnpHardwareVerifier,
+  createTdxHardwareVerifier,
+  normalizeTeeType,
+  parseAttestation,
+  parseSevSnpReport,
+  toHex,
+  verifyAttestation,
+  verifyAttestationAsync,
+} from '@tangle-network/tcloud-attestation'
+export type {
+  AsyncAttestationPolicy,
+  AsyncHardwareVerifier,
+  AttestationPolicy,
+  AttestationVerificationResult,
+  HardwareVerifier,
+  HardwareVerifierResult,
+  ParsedAttestation,
+  SevSnpReport,
+  SevSnpVerifierOptions,
+  TeeType,
+} from '@tangle-network/tcloud-attestation'
 
 // Re-export agent profile types from sandbox SDK
 export type {

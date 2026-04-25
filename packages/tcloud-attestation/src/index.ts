@@ -1,3 +1,5 @@
+import { X509Certificate, createPublicKey, createVerify } from 'node:crypto'
+
 export type TeeType =
   | 'tdx'
   | 'nitro'
@@ -49,16 +51,69 @@ export interface AttestationPolicy {
    * AWS Nitro, or cloud-provider verification without weakening the default
    * fail-closed behavior.
    */
-  hardwareVerifier?: (attestation: ParsedAttestation) => boolean | {
-    valid: boolean
-    errors?: string[]
-  }
+  hardwareVerifier?: HardwareVerifier
 }
 
 export interface AttestationVerificationResult {
   valid: boolean
   attestation?: ParsedAttestation
   errors: string[]
+}
+
+export interface HardwareVerifierResult {
+  valid: boolean
+  errors?: string[]
+}
+
+export type HardwareVerifier =
+  (attestation: ParsedAttestation) => boolean | HardwareVerifierResult
+
+export type AsyncHardwareVerifier =
+  (attestation: ParsedAttestation) =>
+    | boolean
+    | HardwareVerifierResult
+    | Promise<boolean | HardwareVerifierResult>
+
+export interface AsyncAttestationPolicy extends Omit<AttestationPolicy, 'hardwareVerifier'> {
+  hardwareVerifier?: AsyncHardwareVerifier
+}
+
+export interface SevSnpReport {
+  version: number
+  guestSvn: number
+  policy: bigint
+  familyId: Uint8Array
+  imageId: Uint8Array
+  vmpl: number
+  signatureAlgorithm: number
+  reportData: Uint8Array
+  measurement: Uint8Array
+  chipId: Uint8Array
+  reportedTcb: {
+    bootloader: number
+    tee: number
+    snp: number
+    microcode: number
+  }
+}
+
+export interface SevSnpVerifierOptions {
+  /** AMD product line for KDS, e.g. Milan, Genoa, Bergamo, Siena, Turin. */
+  productName?: string
+  /** VCEK certificate as PEM or DER. When omitted, productName is used to fetch from AMD KDS. */
+  vcekCertificate?: string | Uint8Array
+  /** VCEK public key PEM. Useful for tests or callers that validate cert chains externally. */
+  publicKeyPem?: string
+  /** AMD ASK certificate PEM used to verify the VCEK certificate. */
+  askCertificatePem?: string
+  /** AMD ARK certificate PEM used to verify the ASK certificate. */
+  arkCertificatePem?: string
+  /** AMD KDS base URL. Defaults to https://kdsintf.amd.com. */
+  kdsBaseUrl?: string
+  /** Fetch implementation. Defaults to global fetch. */
+  fetch?: typeof fetch
+  /** Disable AMD KDS cert-chain validation. Use only when VCEK trust is established out of band. */
+  skipCertificateChainValidation?: boolean
 }
 
 interface RuntimeAttestationJson {
@@ -86,6 +141,68 @@ export function parseAttestation(
 export function verifyAttestation(
   value: string | RuntimeAttestationJson,
   policy: AttestationPolicy = {},
+): AttestationVerificationResult {
+  const parsed = verifyAttestationPolicy(value, policy)
+  if (!parsed.attestation || parsed.errors.length > 0) {
+    return {
+      valid: false,
+      attestation: parsed.attestation,
+      errors: parsed.errors,
+    }
+  }
+
+  if (policy.hardwareVerifier) {
+    const hardwareResult = policy.hardwareVerifier(parsed.attestation)
+    if (isPromiseLike(hardwareResult)) {
+      return {
+        valid: false,
+        attestation: parsed.attestation,
+        errors: ['hardwareVerifier returned a Promise; use verifyAttestationAsync'],
+      }
+    }
+    parsed.errors.push(...hardwareVerifierErrors(hardwareResult))
+  } else if (!policy.allowUnverifiedHardware) {
+    parsed.errors.push(defaultHardwareVerifierError(parsed.attestation.teeType))
+  }
+
+  return {
+    valid: parsed.errors.length === 0,
+    attestation: parsed.attestation,
+    errors: parsed.errors,
+  }
+}
+
+export async function verifyAttestationAsync(
+  value: string | RuntimeAttestationJson,
+  policy: AsyncAttestationPolicy = {},
+): Promise<AttestationVerificationResult> {
+  const parsed = verifyAttestationPolicy(value, policy)
+  if (!parsed.attestation || parsed.errors.length > 0) {
+    return {
+      valid: false,
+      attestation: parsed.attestation,
+      errors: parsed.errors,
+    }
+  }
+
+  if (policy.hardwareVerifier) {
+    parsed.errors.push(...hardwareVerifierErrors(
+      await policy.hardwareVerifier(parsed.attestation),
+    ))
+  } else if (!policy.allowUnverifiedHardware) {
+    parsed.errors.push(defaultHardwareVerifierError(parsed.attestation.teeType))
+  }
+
+  return {
+    valid: parsed.errors.length === 0,
+    attestation: parsed.attestation,
+    errors: parsed.errors,
+  }
+}
+
+function verifyAttestationPolicy(
+  value: string | RuntimeAttestationJson,
+  policy: Omit<AsyncAttestationPolicy, 'hardwareVerifier'>,
 ): AttestationVerificationResult {
   const errors: string[] = []
   let attestation: ParsedAttestation
@@ -134,36 +251,115 @@ export function verifyAttestation(
 
   if (policy.expectedNonce != null) {
     const nonce = nonceReportData(policy.expectedNonce)
-    if (!constantTimeContainsSubarray(attestation.evidence, nonce)) {
+    if (!attestationContainsReportData(attestation, nonce)) {
       errors.push('attestation evidence does not contain the expected nonce report data')
     }
-  }
-
-  if (policy.hardwareVerifier) {
-    const hardwareResult = policy.hardwareVerifier(attestation)
-    const hardwareValid = typeof hardwareResult === 'boolean'
-      ? hardwareResult
-      : hardwareResult.valid
-    if (!hardwareValid) {
-      const hardwareErrors = typeof hardwareResult === 'boolean'
-        ? []
-        : hardwareResult.errors ?? []
-      errors.push(...(
-        hardwareErrors.length
-          ? hardwareErrors
-          : ['hardware quote signature verification failed']
-      ))
-    }
-  } else if (!policy.allowUnverifiedHardware) {
-    errors.push(
-      `hardware quote signature verification is required but not implemented for ${attestation.teeType}; set allowUnverifiedHardware only after external verification`,
-    )
   }
 
   return {
     valid: errors.length === 0,
     attestation,
     errors,
+  }
+}
+
+export function parseSevSnpReport(evidence: Uint8Array): SevSnpReport {
+  if (evidence.length < SNP_SIGNATURE_S_OFFSET + SNP_SIGNATURE_FIELD_SIZE) {
+    throw new Error(`SEV-SNP report is too short: ${evidence.length} bytes`)
+  }
+
+  return {
+    version: readU32(evidence, 0x00),
+    guestSvn: readU32(evidence, 0x04),
+    policy: readU64(evidence, 0x08),
+    familyId: evidence.slice(0x10, 0x20),
+    imageId: evidence.slice(0x20, 0x30),
+    vmpl: readU32(evidence, 0x30),
+    signatureAlgorithm: readU32(evidence, 0x34),
+    reportData: evidence.slice(SNP_REPORT_DATA_OFFSET, SNP_REPORT_DATA_OFFSET + SNP_REPORT_DATA_SIZE),
+    measurement: evidence.slice(SNP_MEASUREMENT_OFFSET, SNP_MEASUREMENT_OFFSET + SNP_MEASUREMENT_SIZE),
+    chipId: evidence.slice(SNP_CHIP_ID_OFFSET, SNP_CHIP_ID_OFFSET + SNP_CHIP_ID_SIZE),
+    reportedTcb: decodeSnpTcb(readU64(evidence, SNP_REPORTED_TCB_OFFSET)),
+  }
+}
+
+export function createSevSnpHardwareVerifier(
+  options: SevSnpVerifierOptions = {},
+): AsyncHardwareVerifier {
+  return async (attestation) => {
+    if (attestation.teeType !== 'sev-snp') {
+      return {
+        valid: false,
+        errors: [`SEV-SNP verifier cannot verify ${attestation.teeType} evidence`],
+      }
+    }
+
+    let report: SevSnpReport
+    try {
+      report = parseSevSnpReport(attestation.evidence)
+    } catch (error) {
+      return {
+        valid: false,
+        errors: [error instanceof Error ? error.message : String(error)],
+      }
+    }
+
+    if (report.signatureAlgorithm !== SNP_ECDSA_P384_SHA384_ALGO) {
+      return {
+        valid: false,
+        errors: [`unsupported SEV-SNP signature algorithm ${report.signatureAlgorithm}`],
+      }
+    }
+
+    try {
+      const publicKey = options.publicKeyPem
+        ? createPublicKey(options.publicKeyPem)
+        : await vcekPublicKey(attestation, report, options)
+      const signature = sevSnpSignatureToIeeeP1363(attestation.evidence)
+      const verifier = createVerify('sha384')
+      verifier.update(Buffer.from(attestation.evidence.slice(0, SNP_SIGNED_BYTES)))
+      verifier.end()
+      const valid = verifier.verify({
+        key: publicKey,
+        dsaEncoding: 'ieee-p1363',
+      }, signature)
+
+      return valid
+        ? { valid: true }
+        : { valid: false, errors: ['SEV-SNP report signature verification failed'] }
+    } catch (error) {
+      return {
+        valid: false,
+        errors: [error instanceof Error ? error.message : String(error)],
+      }
+    }
+  }
+}
+
+export function createTdxHardwareVerifier(): HardwareVerifier {
+  return (attestation) => {
+    if (attestation.teeType !== 'tdx') {
+      return {
+        valid: false,
+        errors: [`TDX verifier cannot verify ${attestation.teeType} evidence`],
+      }
+    }
+
+    if (attestation.evidence.length === 1024) {
+      return {
+        valid: false,
+        errors: [
+          'TDX evidence is a TDREPORT, not a remotely verifiable quote; configure the runtime to return a DCAP TD quote before enabling TDX hardware verification',
+        ],
+      }
+    }
+
+    return {
+      valid: false,
+      errors: [
+        'TDX quote verification is not implemented in tcloud-attestation yet; use Intel DCAP/Trust Authority verifier and pass it as hardwareVerifier',
+      ],
+    }
   }
 }
 
@@ -209,6 +405,189 @@ export function toHex(bytes: Uint8Array): string {
   return Array.from(bytes)
     .map(byte => byte.toString(16).padStart(2, '0'))
     .join('')
+}
+
+const SNP_REPORT_DATA_OFFSET = 0x50
+const SNP_REPORT_DATA_SIZE = 64
+const SNP_MEASUREMENT_OFFSET = 0x90
+const SNP_MEASUREMENT_SIZE = 48
+const SNP_REPORTED_TCB_OFFSET = 0x180
+const SNP_CHIP_ID_OFFSET = 0x1a0
+const SNP_CHIP_ID_SIZE = 64
+const SNP_SIGNED_BYTES = 0x2a0
+const SNP_SIGNATURE_R_OFFSET = 0x2a0
+const SNP_SIGNATURE_S_OFFSET = 0x2e8
+const SNP_SIGNATURE_FIELD_SIZE = 72
+const SNP_ECDSA_P384_SHA384_ALGO = 1
+
+function attestationContainsReportData(attestation: ParsedAttestation, reportData: Uint8Array): boolean {
+  if (attestation.teeType === 'sev-snp' && attestation.evidence.length >= SNP_REPORT_DATA_OFFSET + SNP_REPORT_DATA_SIZE) {
+    return constantTimeEqual(
+      attestation.evidence.slice(SNP_REPORT_DATA_OFFSET, SNP_REPORT_DATA_OFFSET + SNP_REPORT_DATA_SIZE),
+      reportData,
+    )
+  }
+
+  return constantTimeContainsSubarray(attestation.evidence, reportData)
+}
+
+function hardwareVerifierErrors(result: boolean | HardwareVerifierResult): string[] {
+  const valid = typeof result === 'boolean' ? result : result.valid
+  if (valid) return []
+  if (typeof result !== 'boolean' && result.errors?.length) return result.errors
+  return ['hardware quote signature verification failed']
+}
+
+function defaultHardwareVerifierError(teeType: TeeType): string {
+  if (teeType === 'tdx') {
+    return 'hardware quote signature verification is required for tdx; raw TDREPORT evidence is not remotely verifiable'
+  }
+  return `hardware quote signature verification is required but not implemented for ${teeType}; set allowUnverifiedHardware only after external verification`
+}
+
+function isPromiseLike(value: unknown): value is Promise<unknown> {
+  return typeof value === 'object' && value !== null && typeof (value as { then?: unknown }).then === 'function'
+}
+
+async function vcekPublicKey(
+  attestation: ParsedAttestation,
+  report: SevSnpReport,
+  options: SevSnpVerifierOptions,
+) {
+  const vcek = options.vcekCertificate
+    ? new X509Certificate(options.vcekCertificate)
+    : await fetchVcekCertificate(report, options)
+
+  if (!options.skipCertificateChainValidation) {
+    const chain = options.askCertificatePem && options.arkCertificatePem
+      ? {
+          ask: new X509Certificate(options.askCertificatePem),
+          ark: new X509Certificate(options.arkCertificatePem),
+        }
+      : await fetchAmdCertificateChain(options)
+
+    if (!vcek.verify(chain.ask.publicKey)) {
+      throw new Error('AMD VCEK certificate was not signed by the AMD ASK')
+    }
+    if (!chain.ask.verify(chain.ark.publicKey)) {
+      throw new Error('AMD ASK certificate was not signed by the AMD ARK')
+    }
+    if (!chain.ark.verify(chain.ark.publicKey)) {
+      throw new Error('AMD ARK certificate is not self-signed')
+    }
+  }
+
+  // Keep this reference so a future lint pass cannot remove the parsed report
+  // from the trust path by accident.
+  if (!constantTimeEqual(report.measurement, attestation.measurement)) {
+    throw new Error('SEV-SNP report measurement does not match attestation wrapper measurement')
+  }
+
+  return vcek.publicKey
+}
+
+async function fetchVcekCertificate(report: SevSnpReport, options: SevSnpVerifierOptions): Promise<X509Certificate> {
+  if (!options.productName) {
+    throw new Error('SEV-SNP verification requires productName or vcekCertificate/publicKeyPem')
+  }
+
+  const fetchImpl = options.fetch ?? globalThis.fetch
+  if (typeof fetchImpl !== 'function') {
+    throw new Error('SEV-SNP verification requires fetch or a supplied VCEK certificate')
+  }
+
+  const baseUrl = (options.kdsBaseUrl ?? 'https://kdsintf.amd.com').replace(/\/+$/, '')
+  const params = new URLSearchParams({
+    blSPL: String(report.reportedTcb.bootloader),
+    teeSPL: String(report.reportedTcb.tee),
+    snpSPL: String(report.reportedTcb.snp),
+    ucodeSPL: String(report.reportedTcb.microcode),
+  })
+  const url = `${baseUrl}/vcek/v1/${encodeURIComponent(options.productName)}/${toHex(report.chipId)}?${params}`
+  const response = await fetchImpl(url)
+  if (!response.ok) {
+    throw new Error(`AMD KDS VCEK fetch failed: HTTP ${response.status}`)
+  }
+  return new X509Certificate(new Uint8Array(await response.arrayBuffer()))
+}
+
+async function fetchAmdCertificateChain(options: SevSnpVerifierOptions): Promise<{
+  ask: X509Certificate
+  ark: X509Certificate
+}> {
+  if (!options.productName) {
+    throw new Error('AMD certificate chain validation requires productName or supplied ASK/ARK certificates')
+  }
+
+  const fetchImpl = options.fetch ?? globalThis.fetch
+  if (typeof fetchImpl !== 'function') {
+    throw new Error('AMD certificate chain validation requires fetch or supplied ASK/ARK certificates')
+  }
+
+  const baseUrl = (options.kdsBaseUrl ?? 'https://kdsintf.amd.com').replace(/\/+$/, '')
+  const response = await fetchImpl(`${baseUrl}/vcek/v1/${encodeURIComponent(options.productName)}/cert_chain`)
+  if (!response.ok) {
+    throw new Error(`AMD KDS certificate chain fetch failed: HTTP ${response.status}`)
+  }
+
+  const pem = await response.text()
+  const certs = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g) ?? []
+  if (certs.length < 2) {
+    throw new Error('AMD KDS certificate chain did not contain ASK and ARK certificates')
+  }
+
+  const first = new X509Certificate(certs[0]!)
+  const second = new X509Certificate(certs[1]!)
+  if (first.verify(second.publicKey) && second.verify(second.publicKey)) {
+    return { ask: first, ark: second }
+  }
+  if (second.verify(first.publicKey) && first.verify(first.publicKey)) {
+    return { ask: second, ark: first }
+  }
+
+  throw new Error('AMD KDS certificate chain did not contain a valid ASK/ARK pair')
+}
+
+function sevSnpSignatureToIeeeP1363(evidence: Uint8Array): Buffer {
+  const r = littleEndianP384Integer(evidence.slice(
+    SNP_SIGNATURE_R_OFFSET,
+    SNP_SIGNATURE_R_OFFSET + SNP_SIGNATURE_FIELD_SIZE,
+  ))
+  const s = littleEndianP384Integer(evidence.slice(
+    SNP_SIGNATURE_S_OFFSET,
+    SNP_SIGNATURE_S_OFFSET + SNP_SIGNATURE_FIELD_SIZE,
+  ))
+  return Buffer.concat([r, s])
+}
+
+function littleEndianP384Integer(value: Uint8Array): Buffer {
+  return Buffer.from(value.slice(0, 48)).reverse()
+}
+
+function readU32(bytes: Uint8Array, offset: number): number {
+  return new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getUint32(0, true)
+}
+
+function readU64(bytes: Uint8Array, offset: number): bigint {
+  return new DataView(bytes.buffer, bytes.byteOffset + offset, 8).getBigUint64(0, true)
+}
+
+function decodeSnpTcb(value: bigint): SevSnpReport['reportedTcb'] {
+  return {
+    bootloader: Number(value & 0xffn),
+    tee: Number((value >> 8n) & 0xffn),
+    snp: Number((value >> 48n) & 0xffn),
+    microcode: Number((value >> 56n) & 0xffn),
+  }
+}
+
+function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) {
+    diff |= a[i] ^ b[i]
+  }
+  return diff === 0
 }
 
 function stringField(value: unknown, field: string): string {

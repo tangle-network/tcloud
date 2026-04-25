@@ -106,7 +106,7 @@ describe('TCloudSandbox.create', () => {
     await expect(client.create({
       tee: 'tdx',
       attestationNonce: nonce,
-    })).rejects.toThrow('hardware quote signature verification is required but not implemented for tdx')
+    })).rejects.toThrow('raw TDREPORT evidence is not remotely verifiable')
   })
 
   it('fails closed when returned attestation type does not match requested TEE', async () => {
