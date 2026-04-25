@@ -116,6 +116,41 @@ export interface SevSnpVerifierOptions {
   skipCertificateChainValidation?: boolean
 }
 
+export interface NitroAttestationDocument {
+  protectedHeader: Map<unknown, unknown>
+  moduleId: string
+  digest: string
+  timestamp: number
+  pcrs: Map<number, Uint8Array>
+  certificate: Uint8Array
+  cabundle: Uint8Array[]
+  publicKey?: Uint8Array
+  userData?: Uint8Array
+  nonce?: Uint8Array
+  signature: Uint8Array
+  signedPayload: Uint8Array
+}
+
+export interface NitroVerifierOptions {
+  /**
+   * Public key PEM used instead of the certificate embedded in the Nitro
+   * document. Intended for tests or callers that validate the certificate
+   * chain externally.
+   */
+  publicKeyPem?: string
+  /** AWS Nitro root certificates trusted by the caller, as PEM or DER. */
+  trustedRootCertificates?: Array<string | Uint8Array>
+  /** Current time override for certificate validation, in unix milliseconds. */
+  nowMs?: number
+  /** Maximum skew between the signed Nitro document timestamp and wrapper timestamp. Defaults to 300 seconds. */
+  maxTimestampSkewSeconds?: number
+  /**
+   * Disable certificate-chain validation. Use only when the leaf certificate
+   * trust was established out of band.
+   */
+  skipCertificateChainValidation?: boolean
+}
+
 interface RuntimeAttestationJson {
   tee_type?: unknown
   evidence?: unknown
@@ -336,6 +371,44 @@ export function createSevSnpHardwareVerifier(
   }
 }
 
+export function createNitroHardwareVerifier(
+  options: NitroVerifierOptions = {},
+): HardwareVerifier {
+  return (attestation) => {
+    if (attestation.teeType !== 'nitro') {
+      return {
+        valid: false,
+        errors: [`Nitro verifier cannot verify ${attestation.teeType} evidence`],
+      }
+    }
+
+    let document: NitroAttestationDocument
+    try {
+      document = parseNitroAttestationDocument(attestation.evidence)
+      validateNitroDocument(document, attestation, options)
+      const publicKey = options.publicKeyPem
+        ? createPublicKey(options.publicKeyPem)
+        : new X509Certificate(document.certificate).publicKey
+      const verifier = createVerify('sha384')
+      verifier.update(Buffer.from(document.signedPayload))
+      verifier.end()
+      const valid = verifier.verify({
+        key: publicKey,
+        dsaEncoding: 'ieee-p1363',
+      }, Buffer.from(document.signature))
+
+      return valid
+        ? { valid: true }
+        : { valid: false, errors: ['Nitro attestation document signature verification failed'] }
+    } catch (error) {
+      return {
+        valid: false,
+        errors: [error instanceof Error ? error.message : String(error)],
+      }
+    }
+  }
+}
+
 export function createTdxHardwareVerifier(): HardwareVerifier {
   return (attestation) => {
     if (attestation.teeType !== 'tdx') {
@@ -360,6 +433,58 @@ export function createTdxHardwareVerifier(): HardwareVerifier {
         'TDX quote verification is not implemented in tcloud-attestation yet; use Intel DCAP/Trust Authority verifier and pass it as hardwareVerifier',
       ],
     }
+  }
+}
+
+export function parseNitroAttestationDocument(evidence: Uint8Array): NitroAttestationDocument {
+  const decoded = decodeCbor(evidence)
+  if (!Array.isArray(decoded) || decoded.length !== 4) {
+    throw new Error('Nitro attestation evidence must be a COSE_Sign1 array')
+  }
+
+  const [protectedBytes, , payloadBytes, signature] = decoded
+  if (!(protectedBytes instanceof Uint8Array)) {
+    throw new Error('Nitro COSE protected header must be a byte string')
+  }
+  if (!(payloadBytes instanceof Uint8Array)) {
+    throw new Error('Nitro COSE payload must be a byte string')
+  }
+  if (!(signature instanceof Uint8Array)) {
+    throw new Error('Nitro COSE signature must be a byte string')
+  }
+
+  const protectedHeader = decodeCbor(protectedBytes)
+  if (!(protectedHeader instanceof Map)) {
+    throw new Error('Nitro COSE protected header must be a CBOR map')
+  }
+  const alg = protectedHeader.get(1)
+  if (alg !== -35) {
+    throw new Error(`unsupported Nitro COSE algorithm ${String(alg)}; expected ES384 (-35)`)
+  }
+
+  const payload = decodeCbor(payloadBytes)
+  if (!(payload instanceof Map)) {
+    throw new Error('Nitro COSE payload must be a CBOR map')
+  }
+
+  const pcrs = requiredMap(payload.get('pcrs'), 'pcrs')
+  const cabundle = requiredArray(payload.get('cabundle'), 'cabundle').map((cert, index) =>
+    requiredBytes(cert, `cabundle[${index}]`),
+  )
+
+  return {
+    protectedHeader,
+    moduleId: requiredString(payload.get('module_id'), 'module_id'),
+    digest: requiredString(payload.get('digest'), 'digest'),
+    timestamp: requiredSafeNumber(payload.get('timestamp'), 'timestamp'),
+    pcrs: normalizeNitroPcrs(pcrs),
+    certificate: requiredBytes(payload.get('certificate'), 'certificate'),
+    cabundle,
+    publicKey: optionalBytes(payload.get('public_key'), 'public_key'),
+    userData: optionalBytes(payload.get('user_data'), 'user_data'),
+    nonce: optionalBytes(payload.get('nonce'), 'nonce'),
+    signature,
+    signedPayload: encodeCbor(['Signature1', protectedBytes, new Uint8Array(), payloadBytes]),
   }
 }
 
@@ -428,6 +553,14 @@ function attestationContainsReportData(attestation: ParsedAttestation, reportDat
     )
   }
 
+  if (attestation.teeType === 'nitro') {
+    try {
+      return constantTimeEqual(parseNitroAttestationDocument(attestation.evidence).nonce ?? new Uint8Array(), reportData)
+    } catch {
+      return false
+    }
+  }
+
   return constantTimeContainsSubarray(attestation.evidence, reportData)
 }
 
@@ -442,7 +575,367 @@ function defaultHardwareVerifierError(teeType: TeeType): string {
   if (teeType === 'tdx') {
     return 'hardware quote signature verification is required for tdx; raw TDREPORT evidence is not remotely verifiable'
   }
+  if (teeType === 'nitro') {
+    return 'hardware quote signature verification is required for nitro; pass createNitroHardwareVerifier with trusted AWS Nitro roots'
+  }
   return `hardware quote signature verification is required but not implemented for ${teeType}; set allowUnverifiedHardware only after external verification`
+}
+
+type CborValue =
+  | number
+  | string
+  | Uint8Array
+  | CborValue[]
+  | Map<CborValue, CborValue>
+  | boolean
+  | null
+  | undefined
+
+interface CborReader {
+  bytes: Uint8Array
+  offset: number
+}
+
+function validateNitroDocument(
+  document: NitroAttestationDocument,
+  attestation: ParsedAttestation,
+  options: NitroVerifierOptions,
+): void {
+  if (document.digest.toUpperCase() !== 'SHA384') {
+    throw new Error(`unsupported Nitro attestation digest ${document.digest}`)
+  }
+  const signedTimestamp = Math.floor(document.timestamp / 1000)
+  const maxSkew = options.maxTimestampSkewSeconds ?? 300
+  if (Math.abs(signedTimestamp - attestation.timestamp) > maxSkew) {
+    throw new Error('Nitro signed document timestamp does not match attestation wrapper timestamp')
+  }
+  if (!nitroPcrsContainMeasurement(document, attestation.measurement)) {
+    throw new Error('Nitro PCR measurements do not match attestation wrapper measurement')
+  }
+  if (!options.publicKeyPem && !options.skipCertificateChainValidation) {
+    validateNitroCertificateChain(document, options)
+  }
+}
+
+function nitroPcrsContainMeasurement(document: NitroAttestationDocument, measurement: Uint8Array): boolean {
+  for (const pcr of document.pcrs.values()) {
+    if (constantTimeEqual(pcr, measurement)) return true
+  }
+  return false
+}
+
+function validateNitroCertificateChain(
+  document: NitroAttestationDocument,
+  options: NitroVerifierOptions,
+): void {
+  const leaf = new X509Certificate(document.certificate)
+  const intermediates = document.cabundle.map(cert => new X509Certificate(cert))
+  const roots = (options.trustedRootCertificates ?? []).map(cert => new X509Certificate(cert))
+  const now = new Date(options.nowMs ?? Date.now())
+
+  if (roots.length === 0) {
+    throw new Error('Nitro verification requires trustedRootCertificates, publicKeyPem, or skipCertificateChainValidation')
+  }
+
+  validateCertificateTime(leaf, now, 'Nitro leaf certificate')
+  for (const [index, cert] of intermediates.entries()) {
+    validateCertificateTime(cert, now, `Nitro cabundle certificate ${index}`)
+  }
+  for (const [index, cert] of roots.entries()) {
+    validateCertificateTime(cert, now, `trusted Nitro root certificate ${index}`)
+    if (!cert.verify(cert.publicKey)) {
+      throw new Error(`trusted Nitro root certificate ${index} is not self-signed`)
+    }
+  }
+
+  if (!hasTrustedCertificatePath(leaf, intermediates, roots, new Set())) {
+    throw new Error('Nitro attestation certificate does not chain to a trusted root')
+  }
+}
+
+function hasTrustedCertificatePath(
+  cert: X509Certificate,
+  intermediates: X509Certificate[],
+  roots: X509Certificate[],
+  visited: Set<string>,
+): boolean {
+  const key = toHex(cert.raw)
+  if (visited.has(key)) return false
+  visited.add(key)
+
+  for (const root of roots) {
+    if (sameCertificate(cert, root)) return true
+    if (cert.verify(root.publicKey)) return true
+  }
+
+  for (const issuer of intermediates) {
+    if (sameCertificate(cert, issuer)) continue
+    if (cert.verify(issuer.publicKey) && hasTrustedCertificatePath(issuer, intermediates, roots, visited)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function validateCertificateTime(cert: X509Certificate, now: Date, label: string): void {
+  const validFrom = new Date(cert.validFrom)
+  const validTo = new Date(cert.validTo)
+  if (Number.isNaN(validFrom.getTime()) || Number.isNaN(validTo.getTime())) {
+    throw new Error(`${label} has unparsable validity bounds`)
+  }
+  if (now < validFrom || now > validTo) {
+    throw new Error(`${label} is outside its validity period`)
+  }
+}
+
+function sameCertificate(a: X509Certificate, b: X509Certificate): boolean {
+  return Buffer.compare(Buffer.from(a.raw), Buffer.from(b.raw)) === 0
+}
+
+function decodeCbor(bytes: Uint8Array): CborValue {
+  const reader: CborReader = { bytes, offset: 0 }
+  const value = readCbor(reader)
+  if (reader.offset !== bytes.length) {
+    throw new Error('CBOR data has trailing bytes')
+  }
+  return value
+}
+
+function readCbor(reader: CborReader): CborValue {
+  const initial = readByte(reader)
+  const major = initial >> 5
+  const additional = initial & 0x1f
+  const length = major === 7 ? 0 : readCborLength(reader, additional)
+
+  switch (major) {
+    case 0:
+      return length
+    case 1:
+      return -1 - length
+    case 2:
+      return readBytes(reader, length)
+    case 3:
+      return new TextDecoder().decode(readBytes(reader, length))
+    case 4:
+      return readCborArray(reader, length)
+    case 5:
+      return readCborMap(reader, length)
+    case 6:
+      return readCbor(reader)
+    case 7:
+      return readSimpleCborValue(reader, additional)
+    default:
+      throw new Error(`unsupported CBOR major type ${major}`)
+  }
+}
+
+function readCborLength(reader: CborReader, additional: number): number {
+  if (additional < 24) return additional
+  if (additional === 24) return readByte(reader)
+  if (additional === 25) return readUnsigned(reader, 2)
+  if (additional === 26) return readUnsigned(reader, 4)
+  if (additional === 27) {
+    const value = readUnsignedBigInt(reader, 8)
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error('CBOR integer exceeds Number.MAX_SAFE_INTEGER')
+    }
+    return Number(value)
+  }
+  if (additional === 31) {
+    throw new Error('indefinite-length CBOR items are not supported')
+  }
+  throw new Error(`unsupported CBOR additional information ${additional}`)
+}
+
+function readCborArray(reader: CborReader, length: number): CborValue[] {
+  const items: CborValue[] = []
+  for (let i = 0; i < length; i++) {
+    items.push(readCbor(reader))
+  }
+  return items
+}
+
+function readCborMap(reader: CborReader, length: number): Map<CborValue, CborValue> {
+  const items = new Map<CborValue, CborValue>()
+  for (let i = 0; i < length; i++) {
+    const key = readCbor(reader)
+    const value = readCbor(reader)
+    items.set(key, value)
+  }
+  return items
+}
+
+function readSimpleCborValue(reader: CborReader, additional: number): CborValue {
+  switch (additional) {
+    case 20:
+      return false
+    case 21:
+      return true
+    case 22:
+      return null
+    case 23:
+      return undefined
+    case 24:
+      return readByte(reader)
+    case 25:
+      throw new Error('CBOR half-precision floats are not supported')
+    case 26:
+      return new DataView(readBytes(reader, 4).buffer).getFloat32(0, false)
+    case 27:
+      return new DataView(readBytes(reader, 8).buffer).getFloat64(0, false)
+    default:
+      return length
+  }
+}
+
+function readByte(reader: CborReader): number {
+  if (reader.offset >= reader.bytes.length) {
+    throw new Error('unexpected end of CBOR data')
+  }
+  return reader.bytes[reader.offset++]!
+}
+
+function readBytes(reader: CborReader, length: number): Uint8Array {
+  if (reader.offset + length > reader.bytes.length) {
+    throw new Error('unexpected end of CBOR data')
+  }
+  const value = reader.bytes.slice(reader.offset, reader.offset + length)
+  reader.offset += length
+  return value
+}
+
+function readUnsigned(reader: CborReader, bytes: number): number {
+  return Number(readUnsignedBigInt(reader, bytes))
+}
+
+function readUnsignedBigInt(reader: CborReader, bytes: number): bigint {
+  let value = 0n
+  for (let i = 0; i < bytes; i++) {
+    value = (value << 8n) | BigInt(readByte(reader))
+  }
+  return value
+}
+
+function encodeCbor(value: CborValue): Uint8Array {
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) {
+      throw new Error('CBOR encoder only supports safe integers')
+    }
+    return value >= 0
+      ? encodeTypeAndLength(0, value)
+      : encodeTypeAndLength(1, -1 - value)
+  }
+  if (typeof value === 'string') {
+    const bytes = new TextEncoder().encode(value)
+    return concatBytes(encodeTypeAndLength(3, bytes.length), bytes)
+  }
+  if (value instanceof Uint8Array) {
+    return concatBytes(encodeTypeAndLength(2, value.length), value)
+  }
+  if (Array.isArray(value)) {
+    return concatBytes(encodeTypeAndLength(4, value.length), ...value.map(encodeCbor))
+  }
+  if (value instanceof Map) {
+    const entries: Uint8Array[] = []
+    for (const [key, entryValue] of value.entries()) {
+      entries.push(encodeCbor(key), encodeCbor(entryValue))
+    }
+    return concatBytes(encodeTypeAndLength(5, value.size), ...entries)
+  }
+  if (value === false) return Uint8Array.of(0xf4)
+  if (value === true) return Uint8Array.of(0xf5)
+  if (value === null) return Uint8Array.of(0xf6)
+  if (value === undefined) return Uint8Array.of(0xf7)
+  throw new Error(`unsupported CBOR value: ${String(value)}`)
+}
+
+function encodeTypeAndLength(major: number, length: number): Uint8Array {
+  if (length < 24) return Uint8Array.of((major << 5) | length)
+  if (length <= 0xff) return Uint8Array.of((major << 5) | 24, length)
+  if (length <= 0xffff) return Uint8Array.of((major << 5) | 25, length >> 8, length & 0xff)
+  if (length <= 0xffffffff) {
+    return Uint8Array.of(
+      (major << 5) | 26,
+      (length >>> 24) & 0xff,
+      (length >>> 16) & 0xff,
+      (length >>> 8) & 0xff,
+      length & 0xff,
+    )
+  }
+  const bytes = new Uint8Array(9)
+  bytes[0] = (major << 5) | 27
+  let remaining = BigInt(length)
+  for (let i = 8; i > 0; i--) {
+    bytes[i] = Number(remaining & 0xffn)
+    remaining >>= 8n
+  }
+  return bytes
+}
+
+function concatBytes(...chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.length
+  }
+  return out
+}
+
+function requiredMap(value: CborValue, field: string): Map<CborValue, CborValue> {
+  if (!(value instanceof Map)) {
+    throw new Error(`Nitro attestation field ${field} must be a CBOR map`)
+  }
+  return value
+}
+
+function requiredArray(value: CborValue, field: string): CborValue[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`Nitro attestation field ${field} must be a CBOR array`)
+  }
+  return value
+}
+
+function requiredBytes(value: CborValue, field: string): Uint8Array {
+  if (!(value instanceof Uint8Array)) {
+    throw new Error(`Nitro attestation field ${field} must be a byte string`)
+  }
+  return value
+}
+
+function optionalBytes(value: CborValue, field: string): Uint8Array | undefined {
+  if (value == null) return undefined
+  return requiredBytes(value, field)
+}
+
+function requiredString(value: CborValue, field: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`Nitro attestation field ${field} must be a non-empty string`)
+  }
+  return value
+}
+
+function requiredSafeNumber(value: CborValue, field: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+    throw new Error(`Nitro attestation field ${field} must be a safe integer`)
+  }
+  return value
+}
+
+function normalizeNitroPcrs(pcrs: Map<CborValue, CborValue>): Map<number, Uint8Array> {
+  const normalized = new Map<number, Uint8Array>()
+  for (const [key, value] of pcrs.entries()) {
+    if (typeof key !== 'number' || !Number.isSafeInteger(key) || key < 0) {
+      throw new Error('Nitro PCR indexes must be non-negative safe integers')
+    }
+    normalized.set(key, requiredBytes(value, `pcrs[${key}]`))
+  }
+  if (normalized.size === 0) {
+    throw new Error('Nitro attestation document contains no PCR measurements')
+  }
+  return normalized
 }
 
 function isPromiseLike(value: unknown): value is Promise<unknown> {

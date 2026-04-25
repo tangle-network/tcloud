@@ -1,14 +1,24 @@
 import { createSign, generateKeyPairSync } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
+  createNitroHardwareVerifier,
   createSevSnpHardwareVerifier,
   createTdxHardwareVerifier,
   parseAttestation,
+  parseNitroAttestationDocument,
   parseSevSnpReport,
   toHex,
   verifyAttestation,
   verifyAttestationAsync,
 } from '../src/index.js'
+
+type TestCborValue =
+  | number
+  | string
+  | Uint8Array
+  | TestCborValue[]
+  | Map<TestCborValue, TestCborValue>
+  | null
 
 function report(overrides: Record<string, unknown> = {}) {
   return {
@@ -50,6 +60,100 @@ function signedSevSnpReport(nonce: Uint8Array) {
     measurement: [...evidence.subarray(0x90, 0x90 + 48)],
     publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
   }
+}
+
+function signedNitroDocument(options: {
+  nonce: Uint8Array
+  measurement?: Uint8Array
+}) {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', {
+    namedCurve: 'secp384r1',
+  })
+  const measurement = options.measurement ?? Uint8Array.from(Array.from({ length: 48 }, () => 0xbe))
+  const protectedHeader = encodeTestCbor(new Map<TestCborValue, TestCborValue>([[1, -35]]))
+  const payload = encodeTestCbor(new Map<TestCborValue, TestCborValue>([
+    ['module_id', 'test-module'],
+    ['digest', 'SHA384'],
+    ['timestamp', 1_700_000_000_000],
+    ['pcrs', new Map<TestCborValue, TestCborValue>([[0, measurement]])],
+    ['certificate', Uint8Array.of(1, 2, 3)],
+    ['cabundle', []],
+    ['nonce', options.nonce],
+  ]))
+  const signedPayload = encodeTestCbor(['Signature1', protectedHeader, new Uint8Array(), payload])
+  const signer = createSign('sha384')
+  signer.update(signedPayload)
+  signer.end()
+  const signature = signer.sign({
+    key: privateKey,
+    dsaEncoding: 'ieee-p1363',
+  })
+
+  return {
+    evidence: [...encodeTestCbor([protectedHeader, new Map<TestCborValue, TestCborValue>(), payload, signature])],
+    measurement: [...measurement],
+    publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
+  }
+}
+
+function encodeTestCbor(value: TestCborValue): Uint8Array {
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value)) throw new Error('test CBOR integer must be safe')
+    return value >= 0
+      ? encodeTestCborTypeAndLength(0, value)
+      : encodeTestCborTypeAndLength(1, -1 - value)
+  }
+  if (typeof value === 'string') {
+    const bytes = new TextEncoder().encode(value)
+    return concatTestBytes(encodeTestCborTypeAndLength(3, bytes.length), bytes)
+  }
+  if (value instanceof Uint8Array) {
+    return concatTestBytes(encodeTestCborTypeAndLength(2, value.length), value)
+  }
+  if (Array.isArray(value)) {
+    return concatTestBytes(encodeTestCborTypeAndLength(4, value.length), ...value.map(encodeTestCbor))
+  }
+  if (value instanceof Map) {
+    const items: Uint8Array[] = []
+    for (const [key, entryValue] of value.entries()) {
+      items.push(encodeTestCbor(key), encodeTestCbor(entryValue))
+    }
+    return concatTestBytes(encodeTestCborTypeAndLength(5, value.size), ...items)
+  }
+  return Uint8Array.of(0xf6)
+}
+
+function encodeTestCborTypeAndLength(major: number, length: number): Uint8Array {
+  if (length < 24) return Uint8Array.of((major << 5) | length)
+  if (length <= 0xff) return Uint8Array.of((major << 5) | 24, length)
+  if (length <= 0xffff) return Uint8Array.of((major << 5) | 25, length >> 8, length & 0xff)
+  if (length <= 0xffffffff) {
+    return Uint8Array.of(
+      (major << 5) | 26,
+      (length >>> 24) & 0xff,
+      (length >>> 16) & 0xff,
+      (length >>> 8) & 0xff,
+      length & 0xff,
+    )
+  }
+  const output = new Uint8Array(9)
+  output[0] = (major << 5) | 27
+  let remaining = BigInt(length)
+  for (let i = 8; i > 0; i--) {
+    output[i] = Number(remaining & 0xffn)
+    remaining >>= 8n
+  }
+  return output
+}
+
+function concatTestBytes(...chunks: Uint8Array[]): Uint8Array {
+  const output = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0))
+  let offset = 0
+  for (const chunk of chunks) {
+    output.set(chunk, offset)
+    offset += chunk.length
+  }
+  return output
 }
 
 describe('tcloud-attestation', () => {
@@ -183,6 +287,73 @@ describe('tcloud-attestation', () => {
 
     expect(result.valid).toBe(false)
     expect(result.errors).toContain('SEV-SNP report signature verification failed')
+  })
+
+  it('parses and verifies Nitro COSE attestation documents', () => {
+    const challenge = Uint8Array.from(Array.from({ length: 32 }, (_, index) => index + 1))
+    const nonce = new Uint8Array(64)
+    nonce.set(challenge)
+    const signed = signedNitroDocument({ nonce })
+
+    const parsed = parseNitroAttestationDocument(Uint8Array.from(signed.evidence))
+    expect(parsed.moduleId).toBe('test-module')
+    expect(parsed.pcrs.get(0)).toEqual(Uint8Array.from(signed.measurement))
+
+    const result = verifyAttestation(report({
+      tee_type: 'Nitro',
+      evidence: signed.evidence,
+      measurement: signed.measurement,
+    }), {
+      acceptedTeeTypes: ['nitro'],
+      expectedNonce: challenge,
+      hardwareVerifier: createNitroHardwareVerifier({
+        publicKeyPem: signed.publicKeyPem,
+      }),
+    })
+
+    expect(result.valid).toBe(true)
+  })
+
+  it('rejects tampered Nitro COSE signatures', () => {
+    const nonce = Uint8Array.from(Array.from({ length: 64 }, () => 0x22))
+    const signed = signedNitroDocument({ nonce })
+    signed.evidence[signed.evidence.length - 1] ^= 0xff
+
+    const result = verifyAttestation(report({
+      tee_type: 'Nitro',
+      evidence: signed.evidence,
+      measurement: signed.measurement,
+    }), {
+      acceptedTeeTypes: ['nitro'],
+      expectedNonce: nonce,
+      hardwareVerifier: createNitroHardwareVerifier({
+        publicKeyPem: signed.publicKeyPem,
+      }),
+    })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContain('Nitro attestation document signature verification failed')
+  })
+
+  it('rejects Nitro attestations whose signed PCRs do not match the wrapper measurement', () => {
+    const nonce = Uint8Array.from(Array.from({ length: 64 }, () => 0x33))
+    const signed = signedNitroDocument({ nonce })
+    const badMeasurement = Array.from({ length: 48 }, () => 0xaa)
+
+    const result = verifyAttestation(report({
+      tee_type: 'Nitro',
+      evidence: signed.evidence,
+      measurement: badMeasurement,
+    }), {
+      acceptedTeeTypes: ['nitro'],
+      expectedNonce: nonce,
+      hardwareVerifier: createNitroHardwareVerifier({
+        publicKeyPem: signed.publicKeyPem,
+      }),
+    })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContain('Nitro PCR measurements do not match attestation wrapper measurement')
   })
 
   it('rejects raw TDX TDREPORT evidence as not remotely verifiable', () => {

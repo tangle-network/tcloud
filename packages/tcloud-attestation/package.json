@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/tcloud-attestation",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Fail-closed attestation parsing and policy checks for Tangle TEE sandboxes",
   "type": "module",
   "main": "./dist/index.cjs",

@@ -31,8 +31,8 @@ importers:
         specifier: ^0.1.2
         version: 0.1.2(viem@2.48.4(typescript@5.9.3)(zod@4.3.6))
       '@tangle-network/tcloud-attestation':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: workspace:^
+        version: link:../tcloud-attestation
       commander:
         specifier: ^14.0.3
         version: 14.0.3
@@ -1275,10 +1275,6 @@ packages:
     peerDependenciesMeta:
       viem:
         optional: true
-
-  '@tangle-network/tcloud-attestation@0.1.0':
-    resolution: {integrity: sha512-VI8Qn9ExmCBTmBQB6H0FZwYk3SXXojlp1SEQB9mklqtPMa+kEgrQJKhHH6pe2mm+FYZqaMYV9sTGWFsCQ5aYXA==}
-    engines: {node: '>=18'}
 
   '@tokenizer/inflate@0.4.1':
     resolution: {integrity: sha512-2mAv+8pkG6GIZiF1kNg1jAjh27IDxEPKwdGul3snfztFerfPGI1LjDezZp3i7BElXompqEtPmoPx6c2wgtWsOA==}
@@ -3700,8 +3696,6 @@ snapshots:
   '@tangle-network/sandbox@0.1.2(viem@2.48.4(typescript@5.9.3)(zod@4.3.6))':
     optionalDependencies:
       viem: 2.48.4(typescript@5.9.3)(zod@4.3.6)
-
-  '@tangle-network/tcloud-attestation@0.1.0': {}
 
   '@tokenizer/inflate@0.4.1':
     dependencies:
