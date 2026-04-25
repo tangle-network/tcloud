@@ -194,19 +194,21 @@ describe('Agent.run', () => {
   })
 
   it('routes inline AgentProfile to model "sandbox" + providerOptions.agent_profile', async () => {
-    const inline: AgentProfile = {
+    const inline = {
       name: 'haiku-bot',
       prompt: { systemPrompt: 'You write haiku.' },
       model: { provider: 'anthropic', default: 'claude-sonnet-4-5' },
       permissions: { Bash: 'deny' },
       tools: { Bash: false },
-    }
+      confidential: { tee: 'tdx' },
+    } as AgentProfile
     const { client, calls } = makeFakeClient([makeCompletion('cherry blossom done')])
     await new Agent(client as any, { profile: inline, brief: 'topic: ocean' }).run()
 
     expect(calls[0].cfg.model).toBe('sandbox')
     const provider = calls[0].chats[0].providerOptions as { agent_profile: AgentProfile }
     expect(provider.agent_profile).toStrictEqual(inline)
+    expect((provider.agent_profile as any).confidential).toStrictEqual({ tee: 'tdx' })
   })
 
   it('captures error verdict when the bridge throws', async () => {
