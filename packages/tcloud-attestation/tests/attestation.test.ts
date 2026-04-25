@@ -34,7 +34,7 @@ describe('tcloud-attestation', () => {
 
     expect(result.valid).toBe(false)
     expect(result.errors).toContain(
-      'vendor-root quote signature verification is not implemented for tdx',
+      'hardware quote signature verification is required but not implemented for tdx; set allowUnverifiedHardware only after external verification',
     )
   })
 
@@ -72,5 +72,37 @@ describe('tcloud-attestation', () => {
     expect(bad.errors).toContain(
       'attestation evidence does not contain the expected nonce report data',
     )
+  })
+
+  it('rejects attestation timestamps beyond clock skew', () => {
+    const result = verifyAttestation(report({
+      timestamp: 1_700_000_071,
+    }), {
+      maxAgeSeconds: 60,
+      now: 1_700_000_010,
+      allowUnverifiedHardware: true,
+    })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContain('attestation timestamp is in the future')
+  })
+
+  it('throws on invalid accepted measurement hex', () => {
+    expect(() => verifyAttestation(report(), {
+      acceptedMeasurements: ['0xgg'],
+      allowUnverifiedHardware: true,
+    })).toThrow('hex value contains non-hex characters')
+  })
+
+  it('throws on empty nonce challenges', () => {
+    expect(() => verifyAttestation(report(), {
+      expectedNonce: new Uint8Array(),
+      allowUnverifiedHardware: true,
+    })).toThrow('attestation nonce must be 32-64 bytes, got 0')
+
+    expect(() => verifyAttestation(report(), {
+      expectedNonce: '',
+      allowUnverifiedHardware: true,
+    })).toThrow('attestation nonce must be 32-64 bytes, got 0')
   })
 })
