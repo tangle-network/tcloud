@@ -95,6 +95,9 @@ importers:
 
   packages/tcloud-attestation:
     devDependencies:
+      '@types/node':
+        specifier: ^22.19.15
+        version: 22.19.15
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.10)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)

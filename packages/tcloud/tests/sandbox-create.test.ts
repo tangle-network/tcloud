@@ -38,6 +38,7 @@ describe('TCloudSandbox.create', () => {
   afterEach(() => {
     vi.resetModules()
     vi.doUnmock('@tangle-network/sandbox')
+    vi.unstubAllGlobals()
   })
 
   it('verifies TEE attestation by default and exposes status', async () => {
@@ -106,7 +107,7 @@ describe('TCloudSandbox.create', () => {
     await expect(client.create({
       tee: 'tdx',
       attestationNonce: nonce,
-    })).rejects.toThrow('hardware quote signature verification is required but not implemented for tdx')
+    })).rejects.toThrow('raw TDREPORT evidence is not remotely verifiable')
   })
 
   it('fails closed when returned attestation type does not match requested TEE', async () => {
@@ -218,5 +219,73 @@ describe('TCloudSandbox.create', () => {
     expect(getTeeAttestation).toHaveBeenCalledWith({ attestationNonce: nonce })
     expect(result.attestationStatus.verified).toBe(true)
     expect(result.attestationStatus.nonceBound).toBe(true)
+  })
+
+  it('falls back to sandbox API TEE routes when installed sandbox SDK lacks helpers', async () => {
+    const nonce = '66'.repeat(32)
+    const createdSandbox = {
+      id: 'sandbox-legacy-sdk',
+      metadata: {},
+    }
+    const create = vi.fn(async () => createdSandbox)
+    const fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => new Response(
+      JSON.stringify({ sandbox_id: 'sandbox-legacy-sdk', attestation: attestation(nonce) }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ))
+
+    vi.stubGlobal('fetch', fetch)
+    vi.doMock('@tangle-network/sandbox', () => ({
+      Sandbox: vi.fn(function Sandbox() {
+        return { create }
+      }),
+    }))
+
+    const { TCloudSandbox, startTeeAttestationHeartbeat } = await import('../src/sandbox')
+    const client = new TCloudSandbox({
+      apiKey: 'test-key',
+      baseUrl: 'https://sandbox.example/',
+    })
+    const result = await client.create({
+      tee: 'tdx',
+      attestationNonce: nonce,
+      attestationPolicy: {
+        allowUnverifiedHardware: true,
+      },
+    })
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://sandbox.example/v1/sandboxes/sandbox-legacy-sdk/tee/attestation',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ attestation_nonce: nonce }),
+      }),
+    )
+    const headers = fetch.mock.calls[0]?.[1]?.headers as Headers
+    expect(headers.get('Authorization')).toBe('Bearer test-key')
+    expect(headers.get('Content-Type')).toBe('application/json')
+    expect(result.attestationStatus.verified).toBe(true)
+    expect(typeof (result.sandbox as any).getTeeAttestation).toBe('function')
+    expect(typeof (result.sandbox as any).getTeePublicKey).toBe('function')
+
+    fetch.mockImplementationOnce(async (_url: string | URL | Request, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body))
+      return new Response(
+        JSON.stringify({
+          sandbox_id: 'sandbox-legacy-sdk',
+          attestation: attestation(body.attestation_nonce),
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    })
+    const heartbeat = startTeeAttestationHeartbeat(result.sandbox, {
+      tee: 'tdx',
+      immediate: false,
+      attestationPolicy: {
+        allowUnverifiedHardware: true,
+      },
+    })
+    const sample = await heartbeat.ping()
+    heartbeat.stop()
+    expect(sample.verification.valid).toBe(true)
   })
 })

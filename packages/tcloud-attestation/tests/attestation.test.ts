@@ -1,8 +1,13 @@
+import { createSign, generateKeyPairSync } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
+  createSevSnpHardwareVerifier,
+  createTdxHardwareVerifier,
   parseAttestation,
+  parseSevSnpReport,
   toHex,
   verifyAttestation,
+  verifyAttestationAsync,
 } from '../src/index.js'
 
 function report(overrides: Record<string, unknown> = {}) {
@@ -12,6 +17,38 @@ function report(overrides: Record<string, unknown> = {}) {
     measurement: [0xbe, 0xef],
     timestamp: 1_700_000_000,
     ...overrides,
+  }
+}
+
+function signedSevSnpReport(nonce: Uint8Array) {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', {
+    namedCurve: 'secp384r1',
+  })
+  const evidence = Buffer.alloc(4000)
+  evidence.writeUInt32LE(3, 0x00)
+  evidence.writeUInt32LE(0, 0x04)
+  evidence.writeBigUInt64LE(0n, 0x08)
+  evidence.writeUInt32LE(0, 0x30)
+  evidence.writeUInt32LE(1, 0x34)
+  evidence.set(nonce, 0x50)
+  evidence.fill(0xbe, 0x90, 0x90 + 48)
+  evidence.fill(0xab, 0x1a0, 0x1a0 + 64)
+  evidence.writeBigUInt64LE(0x0700000000000102n, 0x180)
+
+  const signer = createSign('sha384')
+  signer.update(evidence.subarray(0, 0x2a0))
+  signer.end()
+  const signature = signer.sign({
+    key: privateKey,
+    dsaEncoding: 'ieee-p1363',
+  })
+  evidence.set(Buffer.from(signature.subarray(0, 48)).reverse(), 0x2a0)
+  evidence.set(Buffer.from(signature.subarray(48, 96)).reverse(), 0x2e8)
+
+  return {
+    evidence: [...evidence],
+    measurement: [...evidence.subarray(0x90, 0x90 + 48)],
+    publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }).toString(),
   }
 }
 
@@ -39,7 +76,7 @@ describe('tcloud-attestation', () => {
 
     expect(result.valid).toBe(false)
     expect(result.errors).toContain(
-      'hardware quote signature verification is required but not implemented for tdx; set allowUnverifiedHardware only after external verification',
+      'hardware quote signature verification is required for tdx; raw TDREPORT evidence is not remotely verifiable',
     )
   })
 
@@ -99,6 +136,66 @@ describe('tcloud-attestation', () => {
     expect(bad.errors).toContain(
       'attestation evidence does not contain the expected nonce report data',
     )
+  })
+
+  it('strictly checks SEV-SNP nonce report_data and verifies the P-384 report signature', async () => {
+    const nonce = Uint8Array.from(Array.from({ length: 64 }, (_, index) => index))
+    const signed = signedSevSnpReport(nonce)
+
+    const result = await verifyAttestationAsync(report({
+      tee_type: 'Sev',
+      evidence: signed.evidence,
+      measurement: signed.measurement,
+    }), {
+      acceptedTeeTypes: ['sev-snp'],
+      expectedNonce: nonce,
+      hardwareVerifier: createSevSnpHardwareVerifier({
+        publicKeyPem: signed.publicKeyPem,
+      }),
+    })
+
+    expect(result.valid).toBe(true)
+    const parsed = parseSevSnpReport(Uint8Array.from(signed.evidence))
+    expect(parsed.reportedTcb).toEqual({
+      bootloader: 2,
+      tee: 1,
+      snp: 0,
+      microcode: 7,
+    })
+  })
+
+  it('rejects tampered SEV-SNP report signatures', async () => {
+    const nonce = Uint8Array.from(Array.from({ length: 64 }, () => 0x11))
+    const signed = signedSevSnpReport(nonce)
+    signed.evidence[0x90] ^= 0xff
+
+    const result = await verifyAttestationAsync(report({
+      tee_type: 'Sev',
+      evidence: signed.evidence,
+      measurement: signed.measurement,
+    }), {
+      acceptedTeeTypes: ['sev-snp'],
+      expectedNonce: nonce,
+      hardwareVerifier: createSevSnpHardwareVerifier({
+        publicKeyPem: signed.publicKeyPem,
+      }),
+    })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContain('SEV-SNP report signature verification failed')
+  })
+
+  it('rejects raw TDX TDREPORT evidence as not remotely verifiable', () => {
+    const result = verifyAttestation(report({
+      tee_type: 'Tdx',
+      evidence: Array.from({ length: 1024 }, () => 1),
+      measurement: Array.from({ length: 48 }, () => 2),
+    }), {
+      hardwareVerifier: createTdxHardwareVerifier(),
+    })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors[0]).toContain('TDREPORT, not a remotely verifiable quote')
   })
 
   it('rejects attestation timestamps beyond clock skew', () => {

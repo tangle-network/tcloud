@@ -53,6 +53,32 @@ describe('TCloudSandbox attestation heartbeat', () => {
     expect(heartbeat.latest).toBe(sample)
   })
 
+  it('runs async hardware verification through the heartbeat loop', async () => {
+    const getTeeAttestation = vi.fn(async (options?: { attestationNonce?: string }) => ({
+      sandbox_id: 'sandbox-tee',
+      attestation: attestation(options?.attestationNonce ?? ''),
+    }))
+    const hardwareVerifier = vi.fn(async (attestation: { teeType: string }) => ({
+      valid: attestation.teeType === 'tdx',
+    }))
+    const heartbeat = startTeeAttestationHeartbeat(
+      { getTeeAttestation },
+      {
+        tee: 'tdx',
+        immediate: false,
+        attestationPolicy: { hardwareVerifier },
+      },
+    )
+
+    const sample = await heartbeat.ping()
+    heartbeat.stop()
+
+    expect(sample.verification.valid).toBe(true)
+    expect(hardwareVerifier).toHaveBeenCalledWith(expect.objectContaining({
+      teeType: 'tdx',
+    }))
+  })
+
   it('fails closed on invalid heartbeat evidence', async () => {
     const heartbeat = startTeeAttestationHeartbeat(
       {

@@ -1,11 +1,11 @@
 import { Sandbox } from '@tangle-network/sandbox'
 import { createHash, randomBytes } from 'node:crypto'
 import {
-  type AttestationPolicy,
+  type AsyncAttestationPolicy,
   type AttestationVerificationResult,
   normalizeTeeType,
   type TeeType,
-  verifyAttestation,
+  verifyAttestationAsync,
 } from '@tangle-network/tcloud-attestation'
 
 export type TCloudSandboxTee =
@@ -33,7 +33,7 @@ export interface TCloudSandboxCreateOptions {
   sealed?: boolean
   attestationNonce?: string | 'auto'
   verify?: boolean
-  attestationPolicy?: Omit<AttestationPolicy, 'expectedNonce'>
+  attestationPolicy?: Omit<AsyncAttestationPolicy, 'expectedNonce'>
 }
 
 export interface TCloudSandboxAttestationStatus {
@@ -74,7 +74,7 @@ export interface TCloudTeeAttestationHeartbeatOptions {
   immediate?: boolean
   continueOnFailure?: boolean
   sessionId?: string
-  attestationPolicy?: Omit<AttestationPolicy, 'expectedNonce'>
+  attestationPolicy?: Omit<AsyncAttestationPolicy, 'expectedNonce'>
   onSuccess?: (sample: TCloudTeeAttestationHeartbeatSample) => void
   onFailure?: (error: unknown) => void
 }
@@ -96,13 +96,25 @@ export interface TCloudSandboxConfig {
 
 const DEFAULT_SANDBOX_URL = 'https://sandbox.tangle.tools'
 
+interface TeeAttestationResponse {
+  attestation?: unknown
+  attestationNonce?: string
+  [key: string]: unknown
+}
+
 export class TCloudSandbox {
   private readonly client: Sandbox
+  private readonly apiKey: string
+  private readonly baseUrl: string
+  private readonly timeoutMs: number | undefined
 
   constructor(config: TCloudSandboxConfig) {
+    this.apiKey = config.apiKey
+    this.baseUrl = (config.baseUrl ?? DEFAULT_SANDBOX_URL).replace(/\/+$/, '')
+    this.timeoutMs = config.timeoutMs
     this.client = new Sandbox({
-      apiKey: config.apiKey,
-      baseUrl: config.baseUrl ?? DEFAULT_SANDBOX_URL,
+      apiKey: this.apiKey,
+      baseUrl: this.baseUrl,
       timeoutMs: config.timeoutMs,
     })
   }
@@ -115,6 +127,7 @@ export class TCloudSandbox {
       verify: effectiveVerify,
     })
     const sandbox = await this.client.create(createOptions as Parameters<Sandbox['create']>[0])
+    this.attachTeeApiFallbacks(sandbox)
 
     let attestation = attestationFromMetadata((sandbox as any).metadata)
     if ((effectiveVerify || createOptions.confidential?.attestationNonce) && !attestation) {
@@ -135,7 +148,7 @@ export class TCloudSandbox {
     }
 
     const verification = effectiveVerify
-      ? verifyAttestation(attestation as any, {
+      ? await verifyAttestationAsync(attestation as any, {
           ...attestationPolicy,
           expectedNonce: createOptions.confidential?.attestationNonce,
         })
@@ -158,6 +171,74 @@ export class TCloudSandbox {
         errors: verification?.errors ?? [],
       },
     }
+  }
+
+  private attachTeeApiFallbacks(sandbox: unknown): void {
+    if (typeof sandbox !== 'object' || sandbox === null) return
+    const target = sandbox as {
+      id?: unknown
+      getTeeAttestation?: (options?: { attestationNonce?: string }) => Promise<TeeAttestationResponse>
+      getTeePublicKey?: () => Promise<unknown>
+    }
+    if (typeof target.id !== 'string' || target.id.length === 0) return
+
+    if (typeof target.getTeeAttestation !== 'function') {
+      target.getTeeAttestation = options =>
+        this.fetchTeeAttestation(target.id as string, options?.attestationNonce)
+    }
+    if (typeof target.getTeePublicKey !== 'function') {
+      target.getTeePublicKey = () => this.fetchTeePublicKey(target.id as string)
+    }
+  }
+
+  private async fetchTeeAttestation(
+    sandboxId: string,
+    attestationNonce?: string,
+  ): Promise<TeeAttestationResponse> {
+    const response = await this.fetchSandboxApi(
+      `/v1/sandboxes/${encodeURIComponent(sandboxId)}/tee/attestation`,
+      {
+        method: attestationNonce ? 'POST' : 'GET',
+        body: attestationNonce
+          ? JSON.stringify({ attestation_nonce: attestationNonce })
+          : undefined,
+      },
+    )
+    const data = await response.json() as TeeAttestationResponse
+    if (attestationNonce && !data.attestationNonce) {
+      data.attestationNonce = attestationNonce
+    }
+    return data
+  }
+
+  private async fetchTeePublicKey(sandboxId: string): Promise<unknown> {
+    const response = await this.fetchSandboxApi(
+      `/v1/sandboxes/${encodeURIComponent(sandboxId)}/tee/public-key`,
+      { method: 'GET' },
+    )
+    return response.json()
+  }
+
+  private async fetchSandboxApi(path: string, options: RequestInit): Promise<Response> {
+    const headers = new Headers(options.headers)
+    headers.set('Authorization', `Bearer ${this.apiKey}`)
+    if (options.body && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json')
+    }
+
+    const response = await fetch(`${this.baseUrl}${path}`, {
+      ...options,
+      headers,
+      signal: options.signal ?? (
+        this.timeoutMs ? AbortSignal.timeout(this.timeoutMs) : undefined
+      ),
+    })
+
+    if (!response.ok) {
+      const body = await response.text()
+      throw new Error(`Sandbox API ${path} failed with HTTP ${response.status}: ${body}`)
+    }
+    return response
   }
 }
 
@@ -224,7 +305,7 @@ export function startTeeAttestationHeartbeat(
       throw new Error('TEE attestation heartbeat returned no evidence')
     }
 
-    const verification = verifyAttestation(attestation as any, {
+    const verification = await verifyAttestationAsync(attestation as any, {
       ...policy,
       expectedNonce: challenge.nonce,
     })
@@ -345,7 +426,7 @@ export function shouldVerifyAttestation(options: Pick<TCloudSandboxCreateOptions
   return Boolean(options.tee || options.verify)
 }
 
-function buildAttestationPolicy(options: TCloudSandboxCreateOptions): Omit<AttestationPolicy, 'expectedNonce'> {
+function buildAttestationPolicy(options: TCloudSandboxCreateOptions): Omit<AsyncAttestationPolicy, 'expectedNonce'> {
   if (!options.tee || options.tee === 'any') return options.attestationPolicy ?? {}
 
   const requestedTypes = acceptedAttestationTypesForTee(options.tee)
