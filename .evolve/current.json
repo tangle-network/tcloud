@@ -1,5 +1,9 @@
 {
-  "mode": "evolve",
+  "mode": "harden",
+  "status": "findings_fixed",
+  "activeHarden": "2026-04-25-tee-report.md",
+  "critical": 0,
+  "high": 1,
   "generation": 2,
   "activePursuit": null,
   "baselines": {

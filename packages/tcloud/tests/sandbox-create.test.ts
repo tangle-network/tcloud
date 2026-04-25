@@ -11,6 +11,20 @@ function attestation(nonceHex: string) {
   }
 }
 
+function nitroAttestation(nonceHex: string) {
+  return {
+    ...attestation(nonceHex),
+    tee_type: 'Nitro',
+  }
+}
+
+function sevAttestation(nonceHex: string) {
+  return {
+    ...attestation(nonceHex),
+    tee_type: 'Sev',
+  }
+}
+
 function nonceReportData(nonceHex: string): number[] {
   const bytes = nonceHex.match(/../g)?.map(byte => Number.parseInt(byte, 16)) ?? []
   const reportData = new Array(64).fill(0)
@@ -93,6 +107,84 @@ describe('TCloudSandbox.create', () => {
       tee: 'tdx',
       attestationNonce: nonce,
     })).rejects.toThrow('hardware quote signature verification is required but not implemented for tdx')
+  })
+
+  it('fails closed when returned attestation type does not match requested TEE', async () => {
+    const nonce = '44'.repeat(32)
+    const create = vi.fn(async () => ({
+      id: 'sandbox-4',
+      metadata: {
+        teeAttestationJson: JSON.stringify(nitroAttestation(nonce)),
+      },
+    }))
+
+    vi.doMock('@tangle-network/sandbox', () => ({
+      Sandbox: vi.fn(function Sandbox() {
+        return { create }
+      }),
+    }))
+
+    const { TCloudSandbox } = await import('../src/sandbox')
+    const client = new TCloudSandbox({ apiKey: 'test-key' })
+
+    await expect(client.create({
+      tee: 'tdx',
+      attestationNonce: nonce,
+      attestationPolicy: {
+        allowUnverifiedHardware: true,
+      },
+    })).rejects.toThrow('TEE type nitro is not accepted')
+  })
+
+  it('accepts provider requests only when attestation matches their hardware class', async () => {
+    const nonce = '55'.repeat(32)
+    const create = vi.fn(async () => ({
+      id: 'sandbox-5',
+      metadata: {
+        teeAttestationJson: JSON.stringify(sevAttestation(nonce)),
+      },
+    }))
+
+    vi.doMock('@tangle-network/sandbox', () => ({
+      Sandbox: vi.fn(function Sandbox() {
+        return { create }
+      }),
+    }))
+
+    const { TCloudSandbox } = await import('../src/sandbox')
+    const client = new TCloudSandbox({ apiKey: 'test-key' })
+    const result = await client.create({
+      tee: 'azure',
+      attestationNonce: nonce,
+      attestationPolicy: {
+        allowUnverifiedHardware: true,
+      },
+    })
+
+    expect(result.verification?.valid).toBe(true)
+    expect(result.verification?.attestation?.teeType).toBe('sev-snp')
+  })
+
+  it('rejects conflicting caller attestation policy before creation', async () => {
+    const create = vi.fn(async () => ({ id: 'sandbox-6', metadata: {} }))
+
+    vi.doMock('@tangle-network/sandbox', () => ({
+      Sandbox: vi.fn(function Sandbox() {
+        return { create }
+      }),
+    }))
+
+    const { TCloudSandbox } = await import('../src/sandbox')
+    const client = new TCloudSandbox({ apiKey: 'test-key' })
+
+    await expect(client.create({
+      tee: 'tdx',
+      attestationPolicy: {
+        acceptedTeeTypes: ['nitro'],
+        allowUnverifiedHardware: true,
+      },
+    })).rejects.toThrow('TEE attestation policy does not accept requested TEE type tdx')
+    expect(create).not.toHaveBeenCalled()
   })
 
   it('fetches nonce-bound attestation when metadata does not include evidence', async () => {
