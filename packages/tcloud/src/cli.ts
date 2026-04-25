@@ -91,10 +91,22 @@ function teeType(value: string | undefined): TCloudSandboxTee | undefined {
   return value.toLowerCase() as TCloudSandboxTee
 }
 
+function packageVersion(): string {
+  try {
+    const packageJson = JSON.parse(
+      fs.readFileSync(new URL('../package.json', import.meta.url), 'utf-8'),
+    ) as { version?: unknown }
+    if (typeof packageJson.version === 'string') return packageJson.version
+  } catch {
+    // Keep the CLI usable if package metadata is unavailable in a dev bundle.
+  }
+  return '0.0.0'
+}
+
 // ─── CLI Setup ──────────────────────────────────────────────
 
 const program = new Command()
-program.name('tcloud').description('Tangle AI Cloud CLI').version('0.1.0')
+program.name('tcloud').description('Tangle AI Cloud CLI').version(packageVersion())
 
 // ── config ──
 
