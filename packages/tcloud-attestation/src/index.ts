@@ -1,4 +1,11 @@
-export type TeeType = 'tdx' | 'nitro' | 'sev-snp' | 'phala-dstack' | 'none'
+export type TeeType =
+  | 'tdx'
+  | 'nitro'
+  | 'sev-snp'
+  | 'phala-dstack'
+  | 'gcp'
+  | 'azure'
+  | 'none'
 
 export interface ParsedAttestation {
   teeType: TeeType
@@ -85,7 +92,7 @@ export function verifyAttestation(
 
   const acceptedTeeTypes = policy.acceptedTeeTypes?.length
     ? policy.acceptedTeeTypes
-    : (['tdx', 'nitro', 'sev-snp', 'phala-dstack'] satisfies TeeType[])
+    : (['tdx', 'nitro', 'sev-snp', 'phala-dstack', 'gcp', 'azure'] satisfies TeeType[])
 
   if (!acceptedTeeTypes.includes(attestation.teeType)) {
     errors.push(`TEE type ${attestation.teeType} is not accepted`)
@@ -160,6 +167,13 @@ export function normalizeTeeType(value: string): TeeType {
     case 'phala':
     case 'phala-dstack':
       return 'phala-dstack'
+    case 'gcp':
+    case 'gcp-confidential-space':
+    case 'confidential-space':
+      return 'gcp'
+    case 'azure':
+    case 'azure-confidential-compute':
+      return 'azure'
     case 'none':
       return 'none'
     default:

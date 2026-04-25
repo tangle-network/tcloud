@@ -10,10 +10,14 @@
     "declaration": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@tangle-network/tcloud": ["packages/tcloud/src/index.ts"],
+      "@tangle-network/tcloud/*": ["packages/tcloud/src/*.ts"],
+      "@tangle-network/tcloud-attestation": ["packages/tcloud-attestation/src/index.ts"]
+    }
   },
-  "references": [
-    { "path": "./packages/tcloud" },
-    { "path": "./packages/tcloud-agent" }
-  ]
+  "include": ["packages/*/src/**/*.ts"],
+  "exclude": ["**/dist", "node_modules"]
 }

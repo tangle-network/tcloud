@@ -24,6 +24,11 @@ describe('tcloud-attestation', () => {
     expect(parsed.timestamp).toBe(1_700_000_000)
   })
 
+  it('normalizes supported cloud TEE labels', () => {
+    expect(parseAttestation(report({ tee_type: 'gcp-confidential-space' })).teeType).toBe('gcp')
+    expect(parseAttestation(report({ tee_type: 'azure-confidential-compute' })).teeType).toBe('azure')
+  })
+
   it('checks policy fields but fails closed without hardware verification', () => {
     const result = verifyAttestation(report(), {
       acceptedTeeTypes: ['tdx'],

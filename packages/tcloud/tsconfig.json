@@ -10,7 +10,11 @@
     "declaration": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@tangle-network/tcloud-attestation": ["../tcloud-attestation/src/index.ts"]
+    }
   },
   "include": ["src"]
 }
