@@ -115,6 +115,23 @@ export {
   type RotationStats,
 } from './client'
 export { createShieldedClient, generateWallet, signSpendAuth, estimateCost } from './shielded'
+export {
+  TCloudSandbox,
+  createTeeAttestationChallenge,
+  generateAttestationNonce,
+  startTeeAttestationHeartbeat,
+} from './sandbox'
+export type {
+  TCloudSandboxAttestationStatus,
+  TCloudSandboxConfig,
+  TCloudSandboxCreateOptions,
+  TCloudSandboxCreateResult,
+  TCloudSandboxTee,
+  TCloudTeeAttestationChallenge,
+  TCloudTeeAttestationHeartbeat,
+  TCloudTeeAttestationHeartbeatOptions,
+  TCloudTeeAttestationHeartbeatSample,
+} from './sandbox'
 export type {
   TCloudConfig,
   PrivacyConfig,

@@ -44,6 +44,15 @@ export interface AttestationPolicy {
    * separate verifier already authenticated the quote.
    */
   allowUnverifiedHardware?: boolean
+  /**
+   * Optional vendor/root verifier. Use this to plug in Intel PCS, AMD KDS,
+   * AWS Nitro, or cloud-provider verification without weakening the default
+   * fail-closed behavior.
+   */
+  hardwareVerifier?: (attestation: ParsedAttestation) => boolean | {
+    valid: boolean
+    errors?: string[]
+  }
 }
 
 export interface AttestationVerificationResult {
@@ -130,7 +139,22 @@ export function verifyAttestation(
     }
   }
 
-  if (!policy.allowUnverifiedHardware) {
+  if (policy.hardwareVerifier) {
+    const hardwareResult = policy.hardwareVerifier(attestation)
+    const hardwareValid = typeof hardwareResult === 'boolean'
+      ? hardwareResult
+      : hardwareResult.valid
+    if (!hardwareValid) {
+      const hardwareErrors = typeof hardwareResult === 'boolean'
+        ? []
+        : hardwareResult.errors ?? []
+      errors.push(...(
+        hardwareErrors.length
+          ? hardwareErrors
+          : ['hardware quote signature verification failed']
+      ))
+    }
+  } else if (!policy.allowUnverifiedHardware) {
     errors.push(
       `hardware quote signature verification is required but not implemented for ${attestation.teeType}; set allowUnverifiedHardware only after external verification`,
     )
