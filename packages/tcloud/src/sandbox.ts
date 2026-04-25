@@ -34,11 +34,20 @@ export interface TCloudSandboxCreateOptions {
   attestationPolicy?: Omit<AttestationPolicy, 'expectedNonce'>
 }
 
+export interface TCloudSandboxAttestationStatus {
+  requested: boolean
+  evidenceReturned: boolean
+  verified: boolean
+  nonceBound: boolean
+  errors: string[]
+}
+
 export interface TCloudSandboxCreateResult {
   sandbox: unknown
   attestation?: unknown
   verification?: AttestationVerificationResult
   attestationNonce?: string
+  attestationStatus: TCloudSandboxAttestationStatus
 }
 
 export interface TCloudSandboxConfig {
@@ -61,11 +70,15 @@ export class TCloudSandbox {
   }
 
   async create(options: TCloudSandboxCreateOptions): Promise<TCloudSandboxCreateResult> {
-    const createOptions = buildSandboxCreateOptions(options)
+    const effectiveVerify = shouldVerifyAttestation(options)
+    const createOptions = buildSandboxCreateOptions({
+      ...options,
+      verify: effectiveVerify,
+    })
     const sandbox = await this.client.create(createOptions as Parameters<Sandbox['create']>[0])
 
     let attestation = attestationFromMetadata((sandbox as any).metadata)
-    if ((options.verify || options.attestationNonce) && !attestation) {
+    if ((effectiveVerify || createOptions.confidential?.attestationNonce) && !attestation) {
       const getTeeAttestation = (sandbox as any).getTeeAttestation
       if (typeof getTeeAttestation !== 'function') {
         throw new Error('Installed @tangle-network/sandbox does not expose TEE attestation fetching')
@@ -78,11 +91,11 @@ export class TCloudSandbox {
       )).attestation
     }
 
-    if (options.verify && !attestation) {
+    if (effectiveVerify && !attestation) {
       throw new Error('TEE attestation verification requested but no evidence was returned')
     }
 
-    const verification = options.verify
+    const verification = effectiveVerify
       ? verifyAttestation(attestation as any, {
           ...options.attestationPolicy,
           expectedNonce: createOptions.confidential?.attestationNonce,
@@ -98,6 +111,13 @@ export class TCloudSandbox {
       attestation,
       verification,
       attestationNonce: createOptions.confidential?.attestationNonce,
+      attestationStatus: {
+        requested: Boolean(options.tee),
+        evidenceReturned: Boolean(attestation),
+        verified: Boolean(verification?.valid),
+        nonceBound: Boolean(createOptions.confidential?.attestationNonce && verification?.valid),
+        errors: verification?.errors ?? [],
+      },
     }
   }
 }
@@ -109,7 +129,7 @@ export function buildSandboxCreateOptions(options: TCloudSandboxCreateOptions): 
 
   const shouldGenerateNonce =
     options.attestationNonce === 'auto' ||
-    (options.verify && !options.attestationNonce)
+    (shouldVerifyAttestation(options) && !options.attestationNonce)
   const attestationNonce = shouldGenerateNonce
     ? generateAttestationNonce()
     : options.attestationNonce
@@ -142,6 +162,10 @@ export function buildSandboxCreateOptions(options: TCloudSandboxCreateOptions): 
         }
       : undefined,
   }
+}
+
+export function shouldVerifyAttestation(options: Pick<TCloudSandboxCreateOptions, 'tee' | 'verify'>): boolean {
+  return Boolean(options.tee || options.verify)
 }
 
 function generateAttestationNonce(bytes = 32): string {

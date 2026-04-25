@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSandboxCreateOptions } from '../src/sandbox'
+import { buildSandboxCreateOptions, shouldVerifyAttestation } from '../src/sandbox'
 
 describe('tcloud sandbox facade', () => {
   it('maps tcloud options to sandbox create options', () => {
@@ -60,6 +60,20 @@ describe('tcloud sandbox facade', () => {
       name: 'verified',
       tee: 'nitro',
       verify: true,
+    })
+
+    expect(options.confidential.attestationNonce).toMatch(/^[0-9a-f]{64}$/)
+    expect(options.confidential.attestationRefresh).toBe(true)
+  })
+
+  it('verifies TEE requests by default', () => {
+    expect(shouldVerifyAttestation({ tee: 'tdx' })).toBe(true)
+    expect(shouldVerifyAttestation({ tee: 'tdx', verify: false })).toBe(true)
+    expect(shouldVerifyAttestation({ verify: true })).toBe(true)
+
+    const options = buildSandboxCreateOptions({
+      name: 'default-verified',
+      tee: 'nitro',
     })
 
     expect(options.confidential.attestationNonce).toMatch(/^[0-9a-f]{64}$/)

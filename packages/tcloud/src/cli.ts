@@ -398,7 +398,7 @@ sandbox.command('create')
   .option('--tee <type>', 'Require a TEE backend: any, tdx, nitro, sev-snp, phala-dstack, gcp, azure')
   .option('--sealed', 'Require sealed secret support')
   .option('--attestation-nonce <hex|auto>', 'Attach a caller challenge nonce')
-  .option('--verify', 'Verify returned attestation evidence')
+  .option('--verify', 'Verify returned attestation evidence (default when --tee is set)')
   .option('--allow-unverified-hardware', 'Allow structural attestation checks before vendor-root verification is available')
   .option('--sandbox-url <url>', 'Sandbox API base URL')
   .option('--json', 'Print JSON')
@@ -423,7 +423,7 @@ sandbox.command('create')
         tee: teeType(opts.tee),
         sealed: Boolean(opts.sealed),
         attestationNonce: opts.attestationNonce,
-        verify: Boolean(opts.verify),
+        verify: Boolean(opts.verify || opts.tee),
         attestationPolicy: {
           allowUnverifiedHardware: Boolean(opts.allowUnverifiedHardware),
         },
@@ -438,10 +438,11 @@ sandbox.command('create')
       console.log(`Sandbox created: ${box.id ?? 'unknown'}`)
       if (box.status) console.log(`Status: ${box.status}`)
       if (opts.tee) {
+        const status = result.attestationStatus
         console.log(`TEE: ${opts.tee}`)
-        console.log(`Attestation: ${result.attestation ? 'present' : 'not returned'}`)
+        console.log(`Attestation: ${status.verified ? 'verified' : status.evidenceReturned ? 'unverified' : 'not returned'}`)
+        console.log(`Nonce bound: ${status.nonceBound ? 'yes' : 'no'}`)
         if (result.attestationNonce) console.log(`Attestation nonce: ${result.attestationNonce}`)
-        if (result.verification) console.log(`Verification: ${result.verification.valid ? 'valid' : 'invalid'}`)
       }
     } catch (e: any) {
       console.error('Error:', e.message)
