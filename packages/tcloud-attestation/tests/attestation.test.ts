@@ -55,6 +55,28 @@ describe('tcloud-attestation', () => {
     expect(result.valid).toBe(true)
   })
 
+  it('accepts a vendor hardware verifier hook without allowUnverifiedHardware', () => {
+    const result = verifyAttestation(report(), {
+      acceptedTeeTypes: ['tdx'],
+      hardwareVerifier: (attestation) => attestation.teeType === 'tdx',
+    })
+
+    expect(result.valid).toBe(true)
+  })
+
+  it('fails closed when a vendor hardware verifier rejects the quote', () => {
+    const result = verifyAttestation(report(), {
+      acceptedTeeTypes: ['tdx'],
+      hardwareVerifier: () => ({
+        valid: false,
+        errors: ['Intel PCS quote verification failed'],
+      }),
+    })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors).toContain('Intel PCS quote verification failed')
+  })
+
   it('requires nonce report data to appear in evidence', () => {
     const nonce = Uint8Array.from(Array.from({ length: 32 }, () => 0x11))
     const reportData = new Uint8Array(64)

@@ -1,5 +1,5 @@
 import { Sandbox } from '@tangle-network/sandbox'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   type AttestationPolicy,
   type AttestationVerificationResult,
@@ -50,6 +50,42 @@ export interface TCloudSandboxCreateResult {
   verification?: AttestationVerificationResult
   attestationNonce?: string
   attestationStatus: TCloudSandboxAttestationStatus
+}
+
+export interface TCloudTeeAttestationChallenge {
+  nonce: string
+  randomHex: string
+  contextHashHex?: string
+}
+
+export interface TCloudTeeAttestationHeartbeatSample {
+  sequence: number
+  nonce: string
+  context: string
+  attestation: unknown
+  verification: AttestationVerificationResult
+  checkedAt: Date
+}
+
+export interface TCloudTeeAttestationHeartbeatOptions {
+  tee?: TCloudSandboxTee
+  intervalMs?: number
+  signal?: AbortSignal
+  immediate?: boolean
+  continueOnFailure?: boolean
+  sessionId?: string
+  attestationPolicy?: Omit<AttestationPolicy, 'expectedNonce'>
+  onSuccess?: (sample: TCloudTeeAttestationHeartbeatSample) => void
+  onFailure?: (error: unknown) => void
+}
+
+export interface TCloudTeeAttestationHeartbeat {
+  stop(): void
+  ping(context?: string): Promise<TCloudTeeAttestationHeartbeatSample>
+  readonly stopped: boolean
+  readonly failures: number
+  readonly latest: TCloudTeeAttestationHeartbeatSample | undefined
+  readonly done: Promise<void>
 }
 
 export interface TCloudSandboxConfig {
@@ -122,6 +158,140 @@ export class TCloudSandbox {
         errors: verification?.errors ?? [],
       },
     }
+  }
+}
+
+export function createTeeAttestationChallenge(context?: string | Uint8Array): TCloudTeeAttestationChallenge {
+  const randomHex = generateAttestationNonce(32)
+  if (context == null) {
+    return { nonce: randomHex, randomHex }
+  }
+
+  const contextHashHex = createHash('sha256')
+    .update(typeof context === 'string' ? Buffer.from(context) : Buffer.from(context))
+    .digest('hex')
+  return {
+    nonce: `${randomHex}${contextHashHex}`,
+    randomHex,
+    contextHashHex,
+  }
+}
+
+export function startTeeAttestationHeartbeat(
+  sandbox: unknown,
+  options: TCloudTeeAttestationHeartbeatOptions = {},
+): TCloudTeeAttestationHeartbeat {
+  const getTeeAttestation = (sandbox as any)?.getTeeAttestation
+  if (typeof getTeeAttestation !== 'function') {
+    throw new Error('Sandbox does not expose TEE attestation fetching')
+  }
+
+  const intervalMs = options.intervalMs ?? 60_000
+  const sessionId = options.sessionId ?? generateAttestationNonce(16)
+  const policy = options.tee
+    ? buildAttestationPolicy({ tee: options.tee, attestationPolicy: options.attestationPolicy })
+    : options.attestationPolicy ?? {}
+  let stopped = false
+  let failures = 0
+  let sequence = 0
+  let latest: TCloudTeeAttestationHeartbeatSample | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let resolveDone: (() => void) | undefined
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve
+  })
+
+  const stop = () => {
+    if (stopped) return
+    stopped = true
+    if (timer) clearTimeout(timer)
+    resolveDone?.()
+  }
+
+  const ping = async (context?: string): Promise<TCloudTeeAttestationHeartbeatSample> => {
+    if (stopped || options.signal?.aborted) {
+      throw new Error('TEE attestation heartbeat is stopped')
+    }
+
+    const nextSequence = sequence + 1
+    const boundContext = context ?? `${sessionId}:${nextSequence}`
+    const challenge = createTeeAttestationChallenge(boundContext)
+    const response = await getTeeAttestation.call(sandbox, {
+      attestationNonce: challenge.nonce,
+    })
+    const attestation = response?.attestation
+    if (!attestation) {
+      throw new Error('TEE attestation heartbeat returned no evidence')
+    }
+
+    const verification = verifyAttestation(attestation as any, {
+      ...policy,
+      expectedNonce: challenge.nonce,
+    })
+    if (!verification.valid) {
+      throw new Error(`TEE attestation heartbeat verification failed: ${verification.errors.join('; ')}`)
+    }
+
+    const sample: TCloudTeeAttestationHeartbeatSample = {
+      sequence: nextSequence,
+      nonce: challenge.nonce,
+      context: boundContext,
+      attestation,
+      verification,
+      checkedAt: new Date(),
+    }
+    sequence = nextSequence
+    latest = sample
+    options.onSuccess?.(sample)
+    return sample
+  }
+
+  const schedule = () => {
+    if (stopped || options.signal?.aborted) {
+      stop()
+      return
+    }
+    timer = setTimeout(() => {
+      void loop()
+    }, intervalMs)
+  }
+
+  const loop = async () => {
+    try {
+      await ping()
+      schedule()
+    } catch (error) {
+      failures += 1
+      options.onFailure?.(error)
+      if (options.continueOnFailure) {
+        schedule()
+      } else {
+        stop()
+      }
+    }
+  }
+
+  options.signal?.addEventListener('abort', stop, { once: true })
+
+  if (options.immediate === false) {
+    schedule()
+  } else {
+    void loop()
+  }
+
+  return {
+    stop,
+    ping,
+    get stopped() {
+      return stopped
+    },
+    get failures() {
+      return failures
+    },
+    get latest() {
+      return latest
+    },
+    done,
   }
 }
 
@@ -223,7 +393,7 @@ function validateAttestationNonce(value: string): void {
   }
 }
 
-function generateAttestationNonce(bytes = 32): string {
+export function generateAttestationNonce(bytes = 32): string {
   return Array.from(randomBytes(bytes))
     .map(byte => byte.toString(16).padStart(2, '0'))
     .join('')
