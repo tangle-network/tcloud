@@ -59,7 +59,7 @@ import type { TCloudClient, BridgeSession, ChatCompletionChunk, ChatMessage } fr
 //
 // The sandbox SDK defines these in its `session-gateway/agent-connection.ts`
 // (and canonically in `@tangle-network/agent-interface`). That package isn't
-// published to the registry yet and `@tangle-network/sandbox@0.0.3` doesn't
+// published to the registry yet and older `@tangle-network/sandbox` builds do not
 // re-export them, so we redeclare the minimal shape locally and re-export it
 // for consumers. When the interface package ships we can flip these to a
 // direct re-export without churning the consumer surface.

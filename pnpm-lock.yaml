@@ -28,10 +28,10 @@ importers:
         specifier: ^2.2.0
         version: 2.2.0
       '@tangle-network/sandbox':
-        specifier: ^0.0.3
-        version: 0.0.3(viem@2.48.4(typescript@5.9.3)(zod@4.3.6))
+        specifier: ^0.1.2
+        version: 0.1.2(viem@2.48.4(typescript@5.9.3)(zod@4.3.6))
       '@tangle-network/tcloud-attestation':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../tcloud-attestation
       commander:
         specifier: ^14.0.3
@@ -71,8 +71,8 @@ importers:
         specifier: ^0.34.49
         version: 0.34.49
       '@tangle-network/sandbox':
-        specifier: ^0.0.3
-        version: 0.0.3(viem@2.48.4(typescript@5.9.3)(zod@4.3.6))
+        specifier: ^0.1.2
+        version: 0.1.2(viem@2.48.4(typescript@5.9.3)(zod@4.3.6))
       '@tangle-network/tcloud':
         specifier: workspace:*
         version: link:../tcloud
@@ -1268,8 +1268,8 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@tangle-network/sandbox@0.0.3':
-    resolution: {integrity: sha512-GWZVIGrZtg2YpTUP8x0AC9HU6xVu862cv3X0zheijcyCujMnlyFBNerohWPh9U4rS5Linm+/f4RZrYOeQXuaYw==}
+  '@tangle-network/sandbox@0.1.2':
+    resolution: {integrity: sha512-6TPH9QgCgou9Bhc1kzLNL4/PRiT1mjId6NONY5Le/KT2kh77cXH8KN3TTY/cU+/eW+WM5FYJOy32FWl2HShXbw==}
     peerDependencies:
       viem: ^2.0.0
     peerDependenciesMeta:
@@ -3693,7 +3693,7 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@tangle-network/sandbox@0.0.3(viem@2.48.4(typescript@5.9.3)(zod@4.3.6))':
+  '@tangle-network/sandbox@0.1.2(viem@2.48.4(typescript@5.9.3)(zod@4.3.6))':
     optionalDependencies:
       viem: 2.48.4(typescript@5.9.3)(zod@4.3.6)
 
