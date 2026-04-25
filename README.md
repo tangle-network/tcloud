@@ -119,6 +119,20 @@ npx tcloud wallet generate           # create shielded wallet
 npx tcloud credits balance           # check credits
 ```
 
+## Live TEE E2E
+
+The TEE sandbox path has an opt-in live test because it creates real cloud/operator resources.
+
+```bash
+TCLOUD_LIVE_TEE_E2E=1 \
+TCLOUD_SANDBOX_API_KEY=sk-tan-... \
+TCLOUD_LIVE_TEE_TYPE=tdx \
+TCLOUD_LIVE_TEE_ALLOW_UNVERIFIED_HARDWARE=1 \
+pnpm --dir packages/tcloud test:e2e
+```
+
+`TCLOUD_LIVE_TEE_ALLOW_UNVERIFIED_HARDWARE=1` is required until vendor-root quote verification ships in `@tangle-network/tcloud-attestation`. The test still proves the live SDK -> sandbox SDK -> Tangle-backed sandbox -> nonce-bound attestation wiring.
+
 ## Architecture
 
 ```
