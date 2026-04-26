@@ -442,9 +442,6 @@ A: The runner depends on `client.bridge(...)`. If you want a plain ChatCompletio
 **Q: Are tool calls supported?**
 A: The event union reserves `tool.call.*` events. Today they only fire when the bridge surfaces tool parts via non-standard delta fields. Standard OpenAI-shaped tool-call events flow through `message.delta` until the upstream bridge protocol exposes them as separate parts.
 
-**Q: What happened to `PrivateAgent`?**
-A: Retired. Operator rotation moved into the SDK as `TCloudClient.rotating()` because it's a per-call concern, not a multi-iteration concern. `tcloud-agent@0.1.0` shipped the old API and is deprecated; `0.3.0+` is the run-loop primitive documented here.
-
 ---
 
 ## Contributing
