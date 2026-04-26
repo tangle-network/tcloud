@@ -1,38 +1,89 @@
 {
   "name": "@tangle-network/tcloud-agent",
   "version": "0.1.0",
-  "description": "Private AI agent + Pi extension with operator rotation for Tangle AI Cloud",
+  "description": "Private autonomous AI agent with operator rotation, shielded credits, and conversation summarization on operator switch — built on Tangle AI Cloud",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "tangle",
+    "private-ai",
+    "decentralized-inference",
+    "operator-rotation",
+    "shielded-wallet",
+    "pi-package"
+  ],
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./pi-extension": {
+      "types": "./dist/pi-extension.d.ts",
+      "import": "./dist/pi-extension.js"
     }
   },
   "pi": {
-    "extensions": ["./src/pi-extension.ts"]
+    "extensions": [
+      "./src/pi-extension.ts"
+    ]
   },
   "scripts": {
-    "build": "tsup src/index.ts src/pi-extension.ts --format esm --clean",
-    "dev": "tsx src/index.ts"
+    "build": "tsup src/index.ts src/pi-extension.ts --format esm --dts --clean",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "pnpm build"
   },
   "dependencies": {
-    "@tangle-network/tcloud": "workspace:*",
     "@sinclair/typebox": "^0.34.0",
+    "@tangle-network/tcloud": "workspace:^",
     "viem": "^2.0.0"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*"
+    "@mariozechner/pi-coding-agent": "^0.70.0",
+    "@mariozechner/pi-tui": "^0.70.0"
+  },
+  "peerDependenciesMeta": {
+    "@mariozechner/pi-coding-agent": {
+      "optional": true
+    },
+    "@mariozechner/pi-tui": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.70.2",
+    "@mariozechner/pi-tui": "^0.70.2",
+    "@types/node": "^22.19.15",
     "tsup": "^8.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   },
-  "files": ["dist", "src"],
-  "license": "MIT"
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
+  ],
+  "license": "(MIT OR Apache-2.0)",
+  "author": "Tangle Network",
+  "homepage": "https://github.com/tangle-network/tcloud/tree/main/packages/tcloud-agent#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tangle-network/tcloud.git",
+    "directory": "packages/tcloud-agent"
+  },
+  "bugs": {
+    "url": "https://github.com/tangle-network/tcloud/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }
