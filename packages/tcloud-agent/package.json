@@ -1,17 +1,30 @@
 {
   "name": "@tangle-network/tcloud-agent",
   "version": "0.3.0",
-  "description": "Agent run-loop primitive + Pi extension for Tangle AI Cloud",
+  "description": "Agent run-loop primitive over the Tangle sandbox bridge — runs an AgentProfile against a brief with criterion gates, budget caps, and streaming events. Includes TangleToolProvider for Pi tool integration.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "keywords": [
+    "ai",
+    "agent",
+    "agent-runner",
+    "agent-loop",
+    "llm",
+    "tangle",
+    "sandbox",
+    "bridge",
+    "tool-use",
     "pi-package"
   ],
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./pi-extension": {
+      "types": "./dist/pi-extension.d.ts",
+      "import": "./dist/pi-extension.js"
     }
   },
   "pi": {
@@ -20,21 +33,33 @@
     ]
   },
   "scripts": {
-    "build": "tsup src/index.ts src/pi-extension.ts --format esm --clean",
+    "build": "tsup src/index.ts src/pi-extension.ts --format esm --dts --clean",
     "dev": "tsx src/index.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "pnpm build"
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.49",
     "@tangle-network/sandbox": "^0.1.2",
-    "@tangle-network/tcloud": "workspace:*",
+    "@tangle-network/tcloud": "workspace:^",
     "viem": "^2.48.4"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*"
+    "@mariozechner/pi-coding-agent": "^0.70.0",
+    "@mariozechner/pi-tui": "^0.70.0"
+  },
+  "peerDependenciesMeta": {
+    "@mariozechner/pi-coding-agent": {
+      "optional": true
+    },
+    "@mariozechner/pi-tui": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.70.2",
+    "@mariozechner/pi-tui": "^0.70.2",
+    "@types/node": "^22.0.0",
     "tsup": "^8.5.1",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0",
@@ -42,7 +67,27 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE"
   ],
-  "license": "MIT"
+  "license": "(MIT OR Apache-2.0)",
+  "author": "Tangle Network",
+  "homepage": "https://github.com/tangle-network/tcloud/tree/main/packages/tcloud-agent#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tangle-network/tcloud.git",
+    "directory": "packages/tcloud-agent"
+  },
+  "bugs": {
+    "url": "https://github.com/tangle-network/tcloud/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
 }
