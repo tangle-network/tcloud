@@ -9,7 +9,7 @@ TypeScript SDK, CLI, and private inference agent for [Tangle AI Cloud](https://r
 | Package | Description | npm |
 |---------|-------------|-----|
 | [`@tangle-network/tcloud`](./packages/tcloud/) | SDK + CLI | [![npm](https://img.shields.io/npm/v/@tangle-network/tcloud)](https://www.npmjs.com/package/@tangle-network/tcloud) |
-| [`tcloud-agent`](./packages/tcloud-agent/) | Private inference agent + Pi extension | — |
+| [`@tangle-network/tcloud-agent`](./packages/tcloud-agent/) | Private inference agent + Pi extension | [![npm](https://img.shields.io/npm/v/@tangle-network/tcloud-agent)](https://www.npmjs.com/package/@tangle-network/tcloud-agent) |
 
 ## Quick Start
 
@@ -94,8 +94,10 @@ const client = new TCloud({
 
 ## Private Agent
 
+**`pnpm add @tangle-network/tcloud-agent`** — see the [package README](./packages/tcloud-agent/README.md) for full docs, examples, and the privacy model.
+
 ```ts
-import { PrivateAgent } from 'tcloud-agent'
+import { PrivateAgent } from '@tangle-network/tcloud-agent'
 
 const agent = new PrivateAgent({
   apiUrl: 'https://router.tangle.tools/v1',
@@ -128,7 +130,7 @@ npx tcloud credits balance           # check credits
   ├── Routing — X-Tangle-Blueprint / Service / Operator / Routing headers
   └── CLI — chat, models, operators, credits, wallet
 
-tcloud-agent
+@tangle-network/tcloud-agent
   ├── PrivateAgent — operator rotation, wallet lifecycle, context summarization
   ├── PrivateRouter — 5 strategies (round-robin, random, geo, min-exposure, latency)
   └── Pi extension — tcloud_infer + tcloud_wallet tools (Pi 0.65+)
