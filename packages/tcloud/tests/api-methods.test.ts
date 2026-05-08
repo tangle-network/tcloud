@@ -233,27 +233,52 @@ describe('speech()', () => {
   })
 })
 
-describe('TCLOUD_API_KEY env fallback', () => {
+describe('API key env fallback', () => {
   let originalFetch: typeof globalThis.fetch
-  const originalEnv = process.env.TCLOUD_API_KEY
+  const originalTangle = process.env.TANGLE_API_KEY
+  const originalTcloud = process.env.TCLOUD_API_KEY
 
-  beforeEach(() => { originalFetch = globalThis.fetch })
+  beforeEach(() => {
+    originalFetch = globalThis.fetch
+    delete process.env.TANGLE_API_KEY
+    delete process.env.TCLOUD_API_KEY
+  })
   afterEach(() => {
     globalThis.fetch = originalFetch
-    if (originalEnv !== undefined) {
-      process.env.TCLOUD_API_KEY = originalEnv
-    } else {
-      delete process.env.TCLOUD_API_KEY
-    }
+    if (originalTangle !== undefined) process.env.TANGLE_API_KEY = originalTangle
+    else delete process.env.TANGLE_API_KEY
+    if (originalTcloud !== undefined) process.env.TCLOUD_API_KEY = originalTcloud
+    else delete process.env.TCLOUD_API_KEY
   })
 
-  it('reads apiKey from TCLOUD_API_KEY env', async () => {
-    process.env.TCLOUD_API_KEY = 'sk-tan-from-env'
+  it('reads apiKey from TANGLE_API_KEY env (canonical)', async () => {
+    process.env.TANGLE_API_KEY = 'sk-tan-from-tangle-env'
     const fn = mockFetch({ data: [] })
     globalThis.fetch = fn
     const client = new TCloudClient({})
     await client.models()
     const headers = fn.mock.calls[0][1]?.headers
-    expect(headers?.['Authorization']).toBe('Bearer sk-tan-from-env')
+    expect(headers?.['Authorization']).toBe('Bearer sk-tan-from-tangle-env')
+  })
+
+  it('falls back to TCLOUD_API_KEY for backwards compatibility', async () => {
+    process.env.TCLOUD_API_KEY = 'sk-tan-from-tcloud-env'
+    const fn = mockFetch({ data: [] })
+    globalThis.fetch = fn
+    const client = new TCloudClient({})
+    await client.models()
+    const headers = fn.mock.calls[0][1]?.headers
+    expect(headers?.['Authorization']).toBe('Bearer sk-tan-from-tcloud-env')
+  })
+
+  it('prefers TANGLE_API_KEY when both are set', async () => {
+    process.env.TANGLE_API_KEY = 'sk-tan-canonical'
+    process.env.TCLOUD_API_KEY = 'sk-tan-legacy'
+    const fn = mockFetch({ data: [] })
+    globalThis.fetch = fn
+    const client = new TCloudClient({})
+    await client.models()
+    const headers = fn.mock.calls[0][1]?.headers
+    expect(headers?.['Authorization']).toBe('Bearer sk-tan-canonical')
   })
 })

@@ -225,7 +225,7 @@ export class TCloudClient {
    *
    * ```ts
    * const tcloud = TCloudClient.rotating({
-   *   apiKey: process.env.TCLOUD_API_KEY,
+   *   apiKey: process.env.TANGLE_API_KEY,
    *   routing: { strategy: 'min-exposure' },
    * })
    * await tcloud.ask('hello')
@@ -276,7 +276,10 @@ export class TCloudClient {
   constructor(config: TCloudConfig = {}) {
     this.baseURL = (config.baseURL || DEFAULT_BASE_URL).replace(/\/$/, '')
     this.platformURL = (config.platformURL || DEFAULT_PLATFORM_URL).replace(/\/$/, '')
-    this.apiKey = config.apiKey || process.env.TCLOUD_API_KEY
+    // One API key for all Tangle products (router + sandbox + …).
+    // `TANGLE_API_KEY` is canonical; `TCLOUD_API_KEY` is kept as a deprecated
+    // alias for backwards compatibility with existing deployments.
+    this.apiKey = config.apiKey || process.env.TANGLE_API_KEY || process.env.TCLOUD_API_KEY
     this.model = config.model || 'gpt-4o-mini'
     this.privacy = config.privacy
     this.limits = config.limits
