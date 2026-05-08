@@ -82,7 +82,7 @@ export class TCloud extends TCloudClient {
    *
    * ```ts
    * const client = TCloud.rotating({
-   *   apiKey: process.env.TCLOUD_API_KEY,
+   *   apiKey: process.env.TANGLE_API_KEY,
    *   routing: { strategy: 'min-exposure' },
    * })
    * const stats = client.getRotationStats()

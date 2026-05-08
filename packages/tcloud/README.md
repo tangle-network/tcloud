@@ -379,9 +379,10 @@ tcloud config --model gpt-4o-mini
 ```
 
 Environment variables:
-- `TCLOUD_API_KEY` — API key (primary)
-- `OPENAI_API_KEY` — Fallback API key (works because the API is OpenAI-compatible)
-- `TCLOUD_BASE_URL` — Override API base URL
+- `TANGLE_API_KEY` — API key (primary). One key for router + sandbox + all Tangle products.
+- `TCLOUD_API_KEY` — Deprecated alias, still honored for backwards compatibility.
+- `OPENAI_API_KEY` — Fallback API key (works because the API is OpenAI-compatible).
+- `TCLOUD_BASE_URL` — Override API base URL.
 
 ## OpenAI SDK Compatibility
 
@@ -439,7 +440,7 @@ See the [`examples/`](./examples/) directory — each is a self-contained script
 
 Run any example:
 ```bash
-TCLOUD_API_KEY=sk-tan-... npx tsx examples/01-quick-start.ts
+TANGLE_API_KEY=sk-tan-... npx tsx examples/01-quick-start.ts
 ```
 
 ## License
