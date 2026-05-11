@@ -87,6 +87,40 @@ export interface ImageGenerateOptions {
   response_format?: 'url' | 'b64_json'
 }
 
+/**
+ * OpenAI-compatible /v1/images/edits request. Accepts one or more
+ * reference images + a prompt describing how to transform them.
+ *
+ * For gpt-image-2, the supplied images are passed as `image[]` (the
+ * model supports multi-image composition); for dall-e-2 only a single
+ * image is honored. The optional `mask` is the OpenAI inpainting mask
+ * (PNG with alpha) used to constrain where edits are applied.
+ *
+ * Carrying both shapes here lets callers point at the same `imagesEdit`
+ * method regardless of upstream model; cli-bridge / tangle-router
+ * decide what to forward.
+ */
+export interface ImageEditOptions {
+  model?: string
+  prompt: string
+  /** One or more reference images. Pass as Blob (browser/Node 22+),
+   *  ArrayBuffer (will be wrapped in a Blob), or `{data, mediaType}`
+   *  for base64 + explicit mime. The first form is preferred. */
+  image: ImageEditAttachment | ImageEditAttachment[]
+  /** Optional inpainting mask — PNG with transparent pixels marking
+   *  the editable region (OpenAI dall-e-2 / gpt-image-2 inpaint mode). */
+  mask?: ImageEditAttachment
+  n?: number
+  size?: string
+  quality?: string
+  response_format?: 'url' | 'b64_json'
+}
+
+export type ImageEditAttachment =
+  | Blob
+  | ArrayBuffer
+  | { data: string /** base64 */; mediaType: string; filename?: string }
+
 export interface ImageResponse {
   created: number
   data: { url?: string; b64_json?: string; revised_prompt?: string }[]

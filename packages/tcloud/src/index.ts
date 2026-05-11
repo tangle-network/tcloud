@@ -151,6 +151,8 @@ export type {
   ShieldedConfig,
   EmbeddingOptions,
   EmbeddingResponse,
+  ImageEditAttachment,
+  ImageEditOptions,
   ImageGenerateOptions,
   ImageResponse,
   RerankOptions,
