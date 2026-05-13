@@ -216,4 +216,12 @@ export type {
   AgentProfileMcpServer,
   AgentProfileResources,
   AgentProfileCapabilities,
+  // Subagents the harness can dispatch — same shape physim's specialist
+  // dispatcher consumes. Re-export keeps callers on tcloud as the single
+  // entry point instead of pulling sandbox in directly.
+  AgentSubagentProfile,
+  AgentProfileFileMount,
+  AgentProfileResourceRef,
+  AgentProfileValidationResult,
+  AgentProfileValidationIssue,
 } from '@tangle-network/sandbox'

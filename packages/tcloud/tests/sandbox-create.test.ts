@@ -288,4 +288,62 @@ describe('TCloudSandbox.create', () => {
     heartbeat.stop()
     expect(sample.verification.valid).toBe(true)
   })
+
+  // ── AgentProfile rendering ─────────────────────────────────────────
+  // The declarative profile is carried as `backend.profile` on the
+  // underlying SDK call. These tests prove every supported shape is
+  // forwarded without translation:
+  //   1. `agentProfile` alone → `backend = { profile }`
+  //   2. `agentProfile` + `backend: "claude-code"` → both merge into
+  //      `backend = { type, profile }`
+  //   3. neither → `backend` undefined (SDK uses its default)
+
+  it('forwards agentProfile alone as backend.profile', async () => {
+    const create = vi.fn(async () => ({ id: 'sandbox-ap-1' }))
+    vi.doMock('@tangle-network/sandbox', () => ({
+      Sandbox: vi.fn(function Sandbox() { return { create } }),
+    }))
+    const { TCloudSandbox } = await import('../src/sandbox')
+    const client = new TCloudSandbox({ apiKey: 'k' })
+    const profile = {
+      name: 'physim-coop',
+      prompt: { systemPrompt: 'You are physim.' },
+      mcp: { physim: { transport: 'http' as const, url: 'https://example/mcp/p1' } },
+      subagents: { visual_design: { description: 'cad author', prompt: '…', maxSteps: 4 } },
+    }
+    await client.create({ agentProfile: profile })
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      backend: { profile },
+    }))
+  })
+
+  it('merges agentProfile with backend type into backend.{type,profile}', async () => {
+    const create = vi.fn(async () => ({ id: 'sandbox-ap-2' }))
+    vi.doMock('@tangle-network/sandbox', () => ({
+      Sandbox: vi.fn(function Sandbox() { return { create } }),
+    }))
+    const { TCloudSandbox } = await import('../src/sandbox')
+    const client = new TCloudSandbox({ apiKey: 'k' })
+    const profile = { name: 'physim-coop', tools: { search_kb: true } }
+    await client.create({ backend: 'claude-code', agentProfile: profile })
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      backend: { type: 'claude-code', profile },
+    }))
+  })
+
+  it('omits backend when neither type nor profile is set', async () => {
+    const create = vi.fn(async () => ({ id: 'sandbox-ap-3' }))
+    vi.doMock('@tangle-network/sandbox', () => ({
+      Sandbox: vi.fn(function Sandbox() { return { create } }),
+    }))
+    const { TCloudSandbox } = await import('../src/sandbox')
+    const client = new TCloudSandbox({ apiKey: 'k' })
+    await client.create({ name: 'no-backend' })
+
+    expect(create).toHaveBeenCalledWith(expect.not.objectContaining({
+      backend: expect.anything(),
+    }))
+  })
 })
