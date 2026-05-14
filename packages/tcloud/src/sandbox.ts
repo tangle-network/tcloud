@@ -1,4 +1,4 @@
-import { Sandbox } from '@tangle-network/sandbox'
+import { Sandbox, type AgentProfile } from '@tangle-network/sandbox'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   type AsyncAttestationPolicy,
@@ -29,6 +29,25 @@ export interface TCloudSandboxCreateOptions {
   gitUrl?: string
   gitRef?: string
   backend?: 'opencode' | 'claude-code' | 'codex' | 'amp' | (string & {})
+  /**
+   * Declarative agent profile rendered into `backend.profile` on the
+   * underlying `@tangle-network/sandbox` `CreateSandboxOptions`. The
+   * profile carries the harness's prompt, tool allowlist, MCP servers
+   * to attach, and subagents available for dispatch — everything a
+   * coding-agent backend needs to specialize.
+   *
+   * When set alongside `backend` (string), `backend.type` becomes the
+   * type and the profile rides as `backend.profile`. When `backend` is
+   * omitted, the SDK applies its default type and consumes the profile
+   * as-is.
+   *
+   * Confidential execution: if `agentProfile.confidential` is set AND
+   * `tee` is also requested at the top level, the top-level `tee`
+   * wins (it's the explicit op-level requirement). Set one or the
+   * other, not both. The SDK fails closed when the operator cannot
+   * satisfy the requested TEE.
+   */
+  agentProfile?: AgentProfile
   tee?: TCloudSandboxTee
   sealed?: boolean
   attestationNonce?: string | 'auto'
@@ -410,7 +429,16 @@ export function buildSandboxCreateOptions(options: TCloudSandboxCreateOptions): 
             diskGB: options.diskGb,
           }
         : undefined,
-    backend: options.backend ? { type: options.backend } : undefined,
+    // backend: merge `backend` (type string) with `agentProfile` (carried
+    // as `backend.profile` on the underlying SDK). Either may be set
+    // independently; setting both produces `{ type, profile }`. Setting
+    // neither leaves `backend` undefined so the SDK applies its default.
+    backend: options.backend || options.agentProfile
+      ? {
+          ...(options.backend ? { type: options.backend } : {}),
+          ...(options.agentProfile ? { profile: options.agentProfile } : {}),
+        }
+      : undefined,
     confidential: options.tee
       ? {
           tee: options.tee,

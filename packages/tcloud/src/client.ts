@@ -19,6 +19,8 @@ import type {
   SpendAuth,
   EmbeddingOptions,
   EmbeddingResponse,
+  ImageEditAttachment,
+  ImageEditOptions,
   ImageGenerateOptions,
   ImageResponse,
   RerankOptions,
@@ -851,6 +853,57 @@ export class TCloudClient {
     })
   }
 
+  /**
+   * Edit / inpaint / variate an existing image with a text prompt.
+   * Sibling to `imageGenerate`; routes to `/v1/images/edits` via
+   * multipart/form-data per the OpenAI spec.
+   *
+   * Reference image attachments may be passed as `Blob`, `ArrayBuffer`,
+   * or `{data: base64, mediaType, filename?}`. Multi-image composition
+   * (e.g. gpt-image-2 with two reference frames + a prompt that fuses
+   * them) is supported by passing an array; for legacy models only the
+   * first image is honored upstream.
+   */
+  async imagesEdit(options: ImageEditOptions): Promise<ImageResponse> {
+    const formData = new FormData()
+    formData.append('prompt', options.prompt)
+    formData.append('model', options.model || 'gpt-image-2')
+    if (options.n != null) formData.append('n', String(options.n))
+    if (options.size) formData.append('size', options.size)
+    if (options.quality) formData.append('quality', options.quality)
+    if (options.response_format) formData.append('response_format', options.response_format)
+    if (options.mask) formData.append('mask', toEditBlob(options.mask, 'mask.png'), 'mask.png')
+
+    const images = Array.isArray(options.image) ? options.image : [options.image]
+    if (images.length === 0) {
+      throw new TCloudError(400, 'imagesEdit requires at least one image attachment')
+    }
+    // Each upstream takes the field name differently — `image` for a
+    // single-image variant (dall-e-2) and `image[]` for multi-image
+    // composition (gpt-image-2). We always send `image[]`; upstream
+    // implementations of the OpenAI shape accept both.
+    images.forEach((img, idx) => {
+      const blob = toEditBlob(img, `image-${idx + 1}.png`)
+      formData.append('image[]', blob, blobFilename(img, `image-${idx + 1}.png`))
+    })
+
+    const headers = { ...this.headers }
+    delete headers['Content-Type'] // let FormData set the boundary
+
+    this.checkLimits()
+    const res = await proxiedFetch(this.privacy, `${this.baseURL}/images/edits`, {
+      method: 'POST',
+      headers,
+      body: formData as unknown as BodyInit,
+    }, false)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
+    }
+    this._requestCount++
+    return res.json()
+  }
+
   /** Rerank documents by relevance to a query */
   async rerank(options: RerankOptions): Promise<RerankResponse> {
     return this._request(`${this.baseURL}/rerank`, {
@@ -1387,6 +1440,51 @@ export function selectTiers(all: TierConfig[], n: number): TierConfig[] {
 
 function formatPrice(pricePerToken: number): string {
   return `$${(pricePerToken * 1000).toFixed(6)}/1K tokens`
+}
+
+/**
+ * Normalize the polymorphic `ImageEditAttachment` to a `Blob` for
+ * multipart FormData submission. Base64 inputs are decoded; raw
+ * ArrayBuffers are wrapped with a sensible default media type (PNG).
+ */
+function toEditBlob(input: ImageEditAttachment, defaultFilename: string): Blob {
+  if (input instanceof Blob) return input
+  if (input instanceof ArrayBuffer) return new Blob([input], { type: 'image/png' })
+  // {data: base64, mediaType, filename?}
+  const binary = base64ToUint8Array(input.data)
+  // `Uint8Array` is a valid BlobPart at the JS level. TS's narrower
+  // `BodyInit` shape complains about the `ArrayBufferLike` generic in
+  // some lib targets — copy to a fresh ArrayBuffer-backed view so the
+  // type is unambiguous.
+  const copy = new Uint8Array(binary.byteLength)
+  copy.set(binary)
+  return new Blob([copy.buffer], { type: input.mediaType || 'image/png' })
+  void defaultFilename // referenced by blobFilename
+}
+
+/** Extract a stable filename for the upload (multipart needs one;
+ *  upstream sometimes uses extension to sniff the format). */
+function blobFilename(input: ImageEditAttachment, fallback: string): string {
+  if (typeof input === 'object' && !(input instanceof Blob) && !(input instanceof ArrayBuffer)) {
+    if (input.filename) return input.filename
+  }
+  return fallback
+}
+
+function base64ToUint8Array(b64: string): Uint8Array {
+  // Strip data:URL prefix if present.
+  const m = /^data:[^;,]*(?:;[^,]*)?,(.+)$/.exec(b64)
+  const raw = m ? m[1] : b64
+  // Node 18+ and modern browsers expose `atob`; on older Node `Buffer.from`
+  // is the canonical decoder.
+  const bin =
+    typeof atob === 'function'
+      ? atob(raw)
+      : // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (globalThis as any).Buffer.from(raw, 'base64').toString('binary')
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
 }
 
 export interface TierConfig {
