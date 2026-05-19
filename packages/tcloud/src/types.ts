@@ -1,5 +1,7 @@
 /** Core types for the tcloud SDK */
 
+import type { AgentProfile } from '@tangle-network/sandbox'
+
 export interface TCloudConfig {
   /** API base URL (default: https://router.tangle.tools/v1) */
   baseURL?: string
@@ -362,14 +364,21 @@ export interface BridgeOptions {
   harness: 'claude-code' | 'claudish' | 'codex' | 'opencode' | 'kimi-code' | 'sandbox' | 'openai' | 'anthropic' | 'moonshot' | 'zai'
   /** Model id inside the harness (e.g. `sonnet`, `kimi-for-coding`, `gpt-5-codex`). Omit for harness default. */
   model?: string
-  /** Router-issued unlock token. Required unless operator has disabled the gate. */
-  unlock: string
+  /** Router-issued unlock token. Required for router-mediated bridge calls; unused by direct cli-bridge clients. */
+  unlock?: string
   /** Stable caller-owned id for session resume. Map one id per logical conversation. */
   resume?: string
   /** BYOB: point at your own cli-bridge instance. Router must have BYOB enabled. */
   bridgeUrl?: string
   /** BYOB: bearer your cli-bridge expects. */
   bridgeBearer?: string
+}
+
+export interface SandboxChatOptions {
+  /** Inline sandbox AgentProfile. Serialized as cli-bridge/sandbox-api `agent_profile`. */
+  agentProfile?: AgentProfile
+  /** Direct sandbox or cli-bridge session id. Serialized as `session_id`. */
+  sessionId?: string
 }
 
 export interface ChatOptions {
@@ -404,10 +413,15 @@ export interface ChatOptions {
   gateway?: GatewayOptions
   /**
    * Provider-specific parameters passed through to the upstream API.
-   * These are spread into the request body alongside standard fields.
+   * Protected OpenAI/Tangle fields cannot be overridden from this escape hatch.
    * Example: `{ thinking: { type: 'enabled', budget_tokens: 8000 } }`
    */
   providerOptions?: Record<string, unknown>
+  /**
+   * Typed sandbox/cli-bridge extensions. Use this instead of smuggling
+   * `agent_profile` or `session_id` through providerOptions.
+   */
+  sandbox?: SandboxChatOptions
   /**
    * Route this call through the Tangle Router's cli-bridge short-circuit.
    * See {@link BridgeOptions}. When set, `model` is rewritten to

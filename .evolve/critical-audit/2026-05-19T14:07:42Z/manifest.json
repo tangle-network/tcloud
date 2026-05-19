@@ -1,0 +1,40 @@
+{
+  "scope": [
+    "packages/tcloud-agent",
+    "packages/tcloud/src/client.ts",
+    "packages/tcloud/src/types.ts",
+    "packages/tcloud/src/sandbox.ts",
+    "packages/tcloud/examples/14-direct-cli-bridge.ts",
+    "packages/tcloud/examples/15-sandbox-agents.ts",
+    "packages/tcloud/tests/chat.test.ts",
+    "packages/tcloud/tests/rotating-client.test.ts",
+    "packages/tcloud/tests/sandbox-create.test.ts"
+  ],
+  "base": null,
+  "head": "9d7b8ffe9e2f1fb387ee27e9f8cc8891133fe3e0",
+  "project_type": "TypeScript/Node",
+  "flags": {
+    "diff_only": false,
+    "reaudit": false,
+    "parallel": false
+  },
+  "tests": [
+    {
+      "command": "pnpm --filter @tangle-network/tcloud-agent test",
+      "result": "passed",
+      "summary": "1 file passed, 16 tests passed"
+    },
+    {
+      "command": "pnpm --filter @tangle-network/tcloud test -- tests/chat.test.ts tests/rotating-client.test.ts tests/sandbox-create.test.ts",
+      "result": "passed",
+      "summary": "16 files passed, 3 skipped; 248 tests passed, 32 skipped"
+    }
+  ],
+  "findings_count_by_severity": {
+    "critical": 0,
+    "high": 3,
+    "medium": 4,
+    "low": 1
+  },
+  "score": "5/10"
+}

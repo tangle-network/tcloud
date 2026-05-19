@@ -7,8 +7,8 @@
  * permissions + MCP servers + resources. Once published as a profile
  * id, an agent is addressable as an OpenAI model id:
  *
- *   model: "sandbox/<profile-id>"      // cataloged
- *   model: "sandbox" + agent_profile   // inline (for ephemeral / per-call)
+ *   model: "sandbox/<profile-id>"                  // cataloged
+ *   model: "sandbox" + sandbox.agentProfile        // inline (ephemeral / per-call)
  *
  * Anything that speaks OpenAI completions (this SDK, LangChain, AI SDK,
  * curl) can dispatch to a named agent. Means benchmarking N profiles is
@@ -79,10 +79,7 @@ if (direct) {
   const completion = await local.chat({
     model: 'sandbox',
     messages: [{ role: 'user', content: 'topic: distributed systems' }],
-    // @ts-expect-error agent_profile is cli-bridge's sandbox-backend
-    // body field; tcloud's ChatOptions doesn't declare it, but the
-    // body is forwarded verbatim.
-    agent_profile: inline,
+    sandbox: { agentProfile: inline },
   })
   console.log('[inline]', completion.choices[0]?.message?.content)
 }

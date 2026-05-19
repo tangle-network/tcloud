@@ -95,11 +95,12 @@ Five lines of config, one `await`. The loop runs until *every* criterion returns
 | `brief` | `string` | First user turn — what the agent is being asked to do |
 | `criteria?` | `AgentRunCriterion[]` | Completion gates evaluated after each iteration. Empty/undefined ⇒ first reply verifies. |
 | `budget?` | `AgentBudget` | `{ iterations?, wallSec?, usd? }` — first breach exits with `budget-exhausted` |
-| `resume?` | `string` | Pass-through to `BridgeOptions.resume` for session continuity |
-| `workspace?` | `{ dir: string }` | Bind a local directory; surfaced on `AgentRunContext.workspaceDir` and appended to the brief |
+| `resume?` | `string` | Stable session id for the selected transport |
+| `workspace?` | `{ dir: string }` | Transport-scoped workspace context; surfaced on `AgentRunContext.workspaceDir`. It is not injected into the prompt. |
 | `unlock?` | `string` | `BridgeOptions.unlock`. Falls back to `process.env.BRIDGE_UNLOCK`. |
 | `bridgeUrl?` | `string` | BYOB cli-bridge URL (forwarded to `BridgeOptions.bridgeUrl`) |
 | `bridgeBearer?` | `string` | BYOB cli-bridge bearer token |
+| `transport?` | `AgentSessionTransport` | Explicit runtime transport. Omit when using `agent(client, opts)` for router bridge. |
 | `stream?` | `boolean` | `false` to disable SSE — each iteration calls `chat()` non-streaming, emits one `message.delta` per turn. Default `true`. |
 
 ### `AgentRunCriterion`
@@ -149,16 +150,12 @@ interface AgentRunResult {
 
 ```
 iteration.start
-  → message.delta*           (zero or more, may interleave with tool events)
-  → tool.call.start*
-  → tool.call.result*
+  → message.delta*           (zero or more)
   → iteration.complete
   → criterion.check*         (one per evaluated criterion)
 ... next iteration, or:
 verdict                       (terminal — same payload as run() returns)
 ```
-
-`tool.call.*` events are reserved in the union and only fire when the upstream bridge surfaces tool parts via non-standard delta fields. Most runs see `iteration.* + message.delta + criterion.check + verdict` only.
 
 ---
 
@@ -260,7 +257,7 @@ if (result.verdict === 'budget-exhausted') {
 
 Caps are checked at iteration boundaries. First breach wins — useful for cron jobs and CI gates.
 
-### Example 5: Workspace-bound run
+### Example 5: Workspace-aware criteria
 
 ```ts
 import { mkdtempSync } from 'node:fs'
@@ -271,7 +268,7 @@ const workspace = mkdtempSync(join(tmpdir(), 'agent-run-'))
 
 const result = await agent(client, {
   profile: 'sf-proposer',
-  brief: 'Write the manifest into manifest.json under the workspace dir.',
+  brief: `Write the manifest into ${workspace}/manifest.json.`,
   workspace: { dir: workspace },
   criteria: [
     {
@@ -288,7 +285,7 @@ const result = await agent(client, {
 }).run()
 ```
 
-The workspace path is appended to the brief so the agent knows where to `cd`, and surfaces on `ctx.workspaceDir` for filesystem-aware criteria. Pair with the sandbox-harness file write tool.
+`workspace.dir` is surfaced to criteria and to transports that can enforce workspace context. It is not injected into the prompt; include the path in `brief` when a bridge-backed agent needs to know it.
 
 ### Example 6: Inline `AgentProfile`
 
@@ -366,7 +363,7 @@ Build a runnable agent. Identical surface — function form is just `new Agent(.
 
 ### Re-exports
 
-`Agent`, `agent`, all `AgentRun*` types, `AgentEvent`, `TextPart`, `ToolPart`, `ToolState`, `TangleToolProvider`, `CapabilityHandler`, `ToolResult`.
+`Agent`, `agent`, transport factories (`routerBridgeTransport`, `localCliBridgeTransport`, `sandboxSdkTransport`), all `AgentRun*` types, `AgentSession*` types, `AgentEvent`, `TextPart`, `ToolPart`, `ToolState`, `TangleToolProvider`, `CapabilityHandler`, `ToolResult`.
 
 ### Subpath: `@tangle-network/tcloud-agent/pi-extension`
 
@@ -392,22 +389,22 @@ export default {
                 │  - budget tracker           │
                 │  - event emitter            │
                 └──┬───────────────────┬──────┘
-                   │                   │
-                   ▼                   ▼
-        ┌──────────────────┐   ┌──────────────────┐
-        │  TCloudClient    │   │  Sandbox Bridge  │
-        │  .bridge(...)    │──▶│  BridgeSession   │
-        └──────────────────┘   │  (chat / stream) │
-                               └────────┬─────────┘
-                                        │
-                                        ▼
-                                ┌────────────────┐
-                                │ Tangle Router  │
-                                │  + Operators   │
-                                └────────────────┘
+                   │
+                   ▼
+        ┌─────────────────────────────┐
+        │  AgentSessionTransport      │
+        │  - router bridge            │
+        │  - local cli-bridge         │
+        │  - Sandbox SDK runtime      │
+        └──────────────┬──────────────┘
+                       │
+                       ▼
+        ┌────────────────────────────────────────┐
+        │ Tangle Router / cli-bridge / Sandbox   │
+        └────────────────────────────────────────┘
 ```
 
-The runner owns the loop — it does not own the model, the operator, or the wallet. Those live in the TCloud SDK's `bridge()` surface. Want operator rotation? Use [`TCloudClient.rotating()`](https://www.npmjs.com/package/@tangle-network/tcloud) — that's a *client-level* rotation strategy, separate from the agent loop.
+The runner owns the loop, not the runtime. The runtime is an `AgentSessionTransport`: router-mediated sandbox bridge for hosted/operator routing, direct cli-bridge for local shim usage, or the Sandbox SDK for first-class sandbox execution. Want operator rotation? Use [`TCloudClient.rotating()`](https://www.npmjs.com/package/@tangle-network/tcloud) for stateless inference; sandbox sessions intentionally bind to one runtime.
 
 ---
 
@@ -419,7 +416,7 @@ The runner owns the loop — it does not own the model, the operator, or the wal
 | Streaming events | ✅ typed union | yes | yes | yes |
 | Criterion gates | ✅ first-class | manual | manual | manual |
 | Budget caps | ✅ first-class | manual | manual | manual |
-| Workspace binding | ✅ first-class | manual | manual | implicit |
+| Workspace policy | transport-scoped | manual | manual | implicit |
 | Verdict shape | typed enum | string | string | string |
 | Browser-runnable | partial (Node 20+ today) | yes | ✅ | ❌ subprocess |
 | Tangle routing / sandbox | ✅ native | adapter | adapter | n/a |
@@ -431,16 +428,16 @@ The runner owns the loop — it does not own the model, the operator, or the wal
 ## FAQ
 
 **Q: How does this differ from `@tangle-network/tcloud`?**
-A: TCloud is the SDK — single chat / completion / embedding calls, plus `.bridge()` for sandbox-harness sessions and `.rotating()` for operator rotation. tcloud-agent adds the *iteration* / *verification* / *budget* loop on top. Use the SDK directly for one-shot calls; use tcloud-agent when you need run-until-verified semantics.
+A: TCloud is the SDK — single chat / completion / embedding calls, `.bridge()` for bridge sessions, `.sandbox()` / `TCloudSandbox` for Sandbox SDK access, and `.rotating()` for operator rotation. tcloud-agent adds the *iteration* / *verification* / *budget* loop on top of a sandbox-capable transport.
 
 **Q: What is "the bridge"?**
-A: `TCloudClient.bridge(options)` opens a `BridgeSession` that proxies chat traffic through the Tangle sandbox-harness. The agent runs each iteration through that bridge so requests inherit Tangle routing, attestation, and policy enforcement.
+A: `TCloudClient.bridge(options)` opens a `BridgeSession`. On a normal TCloud client it routes through the Tangle Router. On `TCloudClient.fromCliBridge(...)` it talks directly to a local cli-bridge and maps `resume` to cli-bridge's `session_id`.
 
 **Q: Can I use this without the bridge / sandbox?**
-A: The runner depends on `client.bridge(...)`. If you want a plain ChatCompletions agent, the loop logic itself is small — copy it and back it with `client.chat()` directly.
+A: Yes. Pass an explicit transport: `sandboxSdkTransport({ sandbox })`, `localCliBridgeTransport(...)`, or your own `AgentSessionTransport`. Existing `agent(client, opts)` calls still use the router bridge adapter by default.
 
 **Q: Are tool calls supported?**
-A: The event union reserves `tool.call.*` events. Today they only fire when the bridge surfaces tool parts via non-standard delta fields. Standard OpenAI-shaped tool-call events flow through `message.delta` until the upstream bridge protocol exposes them as separate parts.
+A: Not as first-class `AgentEvent`s yet. Standard OpenAI-shaped output flows through `message.delta` until the upstream bridge/runtime protocol exposes tool parts as stable stream events.
 
 ---
 

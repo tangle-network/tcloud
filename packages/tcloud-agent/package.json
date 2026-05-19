@@ -1,7 +1,7 @@
 {
   "name": "@tangle-network/tcloud-agent",
   "version": "0.3.0",
-  "description": "Agent run-loop primitive over the Tangle sandbox bridge — runs an AgentProfile against a brief with criterion gates, budget caps, and streaming events. Includes TangleToolProvider for Pi tool integration.",
+  "description": "Agent run-loop primitive over Tangle sandbox transports — runs an AgentProfile against a brief with criterion gates, budget caps, and streaming events. Includes TangleToolProvider for Pi tool integration.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

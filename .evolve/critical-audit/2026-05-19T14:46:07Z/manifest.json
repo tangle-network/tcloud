@@ -1,0 +1,76 @@
+{
+  "scope": [
+    "packages/tcloud-agent",
+    "packages/tcloud-agent/package.json",
+    "packages/tcloud-agent/examples/01-run.ts",
+    "packages/tcloud-agent/examples/02-stream.ts",
+    "packages/tcloud/package.json",
+    "packages/tcloud/src/client.ts",
+    "packages/tcloud/src/types.ts",
+    "packages/tcloud/src/index.ts",
+    "packages/tcloud/examples/14-direct-cli-bridge.ts",
+    "packages/tcloud/examples/15-sandbox-agents.ts",
+    "packages/tcloud/tests/chat.test.ts"
+  ],
+  "base": "9d7b8ffe9e2f1fb387ee27e9f8cc8891133fe3e0",
+  "head": "working-tree",
+  "priorRun": ".evolve/critical-audit/2026-05-19T14:07:42Z",
+  "project_type": "TypeScript/Node",
+  "flags": {
+    "diff_only": false,
+    "reaudit": true,
+    "parallel": false
+  },
+  "tests": [
+    {
+      "command": "pnpm --filter @tangle-network/tcloud test",
+      "result": "passed",
+      "summary": "16 files passed, 3 skipped; 255 tests passed, 32 skipped"
+    },
+    {
+      "command": "pnpm --filter @tangle-network/tcloud-attestation build",
+      "result": "passed",
+      "summary": "dist emitted for package resolution"
+    },
+    {
+      "command": "pnpm --filter @tangle-network/tcloud-attestation test",
+      "result": "passed",
+      "summary": "1 file passed, 16 tests passed"
+    },
+    {
+      "command": "pnpm --filter @tangle-network/tcloud-agent test",
+      "result": "passed",
+      "summary": "1 file passed, 20 tests passed"
+    },
+    {
+      "command": "pnpm --filter @tangle-network/tcloud build",
+      "result": "passed",
+      "summary": "ESM/CJS/DTS build passed"
+    },
+    {
+      "command": "pnpm --filter @tangle-network/tcloud-agent build",
+      "result": "passed",
+      "summary": "ESM/DTS build passed"
+    },
+    {
+      "command": "pnpm --filter @tangle-network/tcloud exec tsc -p tsconfig.json --noEmit",
+      "result": "passed",
+      "summary": "typecheck passed"
+    },
+    {
+      "command": "pnpm --filter @tangle-network/tcloud-agent exec tsc -p tsconfig.check.json --noEmit",
+      "result": "passed",
+      "summary": "typecheck passed"
+    },
+    {
+      "command": "git diff --check",
+      "result": "passed",
+      "summary": "no whitespace errors"
+    }
+  ],
+  "findings_count_by_status": {
+    "resolved": 7,
+    "partially_resolved": 1,
+    "still_present": 0
+  }
+}

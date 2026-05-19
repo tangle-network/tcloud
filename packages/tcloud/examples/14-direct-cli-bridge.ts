@@ -53,18 +53,17 @@ for await (const chunk of client.askStream('write a 6-word haiku about sqlite', 
 }
 process.stdout.write('\n')
 
-// ── 4. Full chat() with messages array + session_id for resume ──
-const completion = await client.chat({
-  model: 'claude-code/sonnet',
+// ── 4. Resumable session through the same bridge() API ──
+const claude = client.bridge({
+  harness: 'claude-code',
+  model: 'sonnet',
+  resume: 'haiku-thread-1',
+})
+const completion = await claude.chat({
   messages: [
     { role: 'system', content: 'You are terse.' },
     { role: 'user', content: 'list 3 SQL injection patterns' },
   ],
-  // @ts-expect-error session_id is cli-bridge-specific; tcloud's
-  // ChatOptions doesn't declare it, but the body is forwarded
-  // verbatim and cli-bridge picks it up. Use a stable slug to
-  // resume the same CLI conversation across calls (e.g. `pr-42`).
-  session_id: 'haiku-thread-1',
 })
 console.log('[chat]', completion.choices[0]?.message?.content)
 console.log('[usage]', completion.usage)

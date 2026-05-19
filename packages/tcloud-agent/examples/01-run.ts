@@ -29,11 +29,12 @@ const profile: AgentProfile = {
 
 async function main() {
   const client = new TCloud({ apiKey: process.env.TCLOUD_API_KEY })
+  const workspace = process.env.WORKSPACE_DIR ?? process.cwd()
 
   const result = await agent(client, {
     profile,
-    brief: 'Verify the scaffold at the mounted workspace builds cleanly.',
-    workspace: { dir: process.env.WORKSPACE_DIR ?? process.cwd() },
+    brief: `Verify the scaffold at ${workspace} builds cleanly.`,
+    workspace: { dir: workspace },
     criteria: [
       {
         name: 'states-verdict',

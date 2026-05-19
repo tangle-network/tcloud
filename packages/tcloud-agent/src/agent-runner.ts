@@ -1,7 +1,7 @@
 /**
  * tcloud-agent — Agent primitive (run + stream).
  *
- * A run-loop wrapper on top of `TCloudClient.bridge({ harness: 'sandbox', ... })`.
+ * A run-loop wrapper over a sandbox-capable AgentSessionTransport.
  * Feeds an initial brief, executes a sandbox agent turn, evaluates a list of
  * completion criteria, and iterates — feeding failure reasons back in — until
  * all criteria pass or a budget gate fires.
@@ -39,11 +39,7 @@
  *
  * Design:
  * - Cataloged profile (string): routed as `model: '<profile-id>'`.
- * - Inline profile (object): routed as `model: 'sandbox'` with the profile
- *   forwarded in the request body as `agent_profile` (the cli-bridge sandbox
- *   backend key — see `packages/tcloud/examples/15-sandbox-agents.ts`). The
- *   body key is injected via `ChatOptions.providerOptions` which the tcloud
- *   client spreads into the request body verbatim.
+ * - Inline profile (object): passed through typed sandbox transport fields.
  * - Criteria evaluated in order after each assistant turn. First failure
  *   drives the next iteration's user prompt. All-pass returns `verified`.
  * - Budget gates: `iterations` (count), `wallSec` (wall clock), `usd`
@@ -52,8 +48,8 @@
  *   thrown out of the iterable (same contract as `run()`).
  */
 
-import type { AgentProfile } from '@tangle-network/sandbox'
-import type { TCloudClient, BridgeSession, ChatCompletionChunk, ChatMessage } from '@tangle-network/tcloud'
+import type { AgentProfile, PromptOptions, PromptResult, SandboxEvent, SandboxInstance } from '@tangle-network/sandbox'
+import { TCloudClient, type ChatCompletion, type ChatCompletionChunk, type ChatMessage } from '@tangle-network/tcloud'
 
 // ── Part types (wrappers over the sandbox SDK session-gateway shape) ─────────
 //
@@ -121,8 +117,35 @@ export interface AgentRunContext {
   lastMessage: string
   /** Full transcript including the just-completed turn. */
   transcript: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>
-  /** Local workspace directory (echoed from `AgentRunOptions.workspace.dir` if set). */
+  /** Workspace directory requested for the transport, if any. */
   workspaceDir?: string
+}
+
+export interface AgentSessionStart {
+  profile: AgentProfile | string
+  resume?: string
+  unlock?: string
+  bridgeUrl?: string
+  bridgeBearer?: string
+  workspace?: { dir: string }
+}
+
+export interface AgentSessionChatOptions {
+  messages: ChatMessage[]
+  sandbox?: {
+    agentProfile?: AgentProfile
+    sessionId?: string
+  }
+}
+
+export interface AgentSession {
+  id?: string
+  chat(options: AgentSessionChatOptions): Promise<ChatCompletion>
+  chatStream(options: AgentSessionChatOptions): AsyncIterable<ChatCompletionChunk>
+}
+
+export interface AgentSessionTransport {
+  start(input: AgentSessionStart): AgentSession | Promise<AgentSession>
 }
 
 export interface AgentRunOptions {
@@ -134,20 +157,22 @@ export interface AgentRunOptions {
   criteria?: AgentRunCriterion[]
   /** Stop conditions orthogonal to criteria. */
   budget?: AgentBudget
-  /** `BridgeOptions.resume` — session continuity across calls. */
+  /** Transport session continuity across calls. */
   resume?: string
   /**
-   * Bind a local workspace directory that the agent can reference in the
-   * brief. Surfaced on `AgentRunContext.workspaceDir`; the path is appended
-   * to the first user turn so the agent knows where to cd.
+   * Workspace requested for transports that can enforce one. The agent loop
+   * surfaces it on `AgentRunContext.workspaceDir`; it is not appended to the
+   * prompt as an authority signal.
    */
   workspace?: { dir: string }
-  /** `BridgeOptions.unlock`. Falls back to `process.env.BRIDGE_UNLOCK`. */
+  /** Router bridge unlock. Falls back to `process.env.BRIDGE_UNLOCK` for router bridge transport. */
   unlock?: string
   /** BYOB cli-bridge URL — forwarded as `BridgeOptions.bridgeUrl`. */
   bridgeUrl?: string
   /** BYOB cli-bridge bearer — forwarded as `BridgeOptions.bridgeBearer`. */
   bridgeBearer?: string
+  /** Explicit runtime transport. When omitted, `agent(client, opts)` uses router bridge. */
+  transport?: AgentSessionTransport
   /**
    * Opt out of streaming. When `false`, each iteration calls `chat()` in
    * non-streaming mode and the stream yields a single `message.delta` per
@@ -180,35 +205,140 @@ export interface AgentRunResult {
  *
  * Ordering within an iteration:
  *   `iteration.start`
- *   → `message.delta`* (zero or more; may interleave with tool events)
- *   → (`tool.call.start` → `tool.call.result`)* (best-effort — see note below)
+ *   → `message.delta`* (zero or more)
  *   → `iteration.complete`
  *   → `criterion.check`* (one per evaluated criterion)
  *
  * The final event of the stream is always a single `verdict` carrying the
  * same payload that `run()` returns.
- *
- * Note on tool events: the router's current OpenAI-shaped chat-stream surface
- * (`ChatCompletionChunk`) does not expose tool parts directly; `tool.call.*`
- * events are reserved in the union so consumers can start branching on them,
- * but they are only emitted today when the upstream bridge surfaces tool
- * parts via a non-standard delta field. Most runs will see `iteration.*` +
- * `message.delta` + `criterion.check` + `verdict` only.
  */
 export type AgentEvent =
   | { type: 'iteration.start';    iteration: number }
   | { type: 'message.delta';      iteration: number; text: string }
-  | { type: 'tool.call.start';    iteration: number; tool: string; input: unknown }
-  | { type: 'tool.call.result';   iteration: number; tool: string; output: unknown; status: 'completed' | 'failed' | 'error' }
   | { type: 'iteration.complete'; iteration: number; message: string }
   | { type: 'criterion.check';    iteration: number; name: string; ok: boolean; reason?: string }
   | { type: 'verdict';            verdict: AgentRunVerdict; iterations: number; wallMs: number; usd: number | null; transcript: AgentRunContext['transcript']; blockedBy?: string; error?: string }
 
-/** Bridge surface the runner depends on — keeps tests fake-able. */
-type BridgeClient = Pick<TCloudClient, 'bridge'>
+export interface AgentBridgeOptions {
+  harness: 'sandbox'
+  model?: string
+  unlock: string
+  resume?: string
+  bridgeUrl?: string
+  bridgeBearer?: string
+}
+
+/** Legacy bridge surface accepted by `agent(client, opts)`. */
+type BridgeClient = {
+  bridge(cfg: AgentBridgeOptions): AgentSession
+}
+
+export interface BridgeTransportDefaults {
+  unlock?: string
+  bridgeUrl?: string
+  bridgeBearer?: string
+}
+
+export interface LocalCliBridgeTransportConfig {
+  url: string
+  bearer: string
+  config?: Parameters<typeof TCloudClient.fromCliBridge>[0]['config']
+}
+
+export type SandboxPromptRuntime = Pick<SandboxInstance, 'prompt' | 'streamPrompt'>
+
+export interface SandboxSdkTransportOptions {
+  sandbox: SandboxPromptRuntime
+  sessionId?: string
+  backend?: Partial<NonNullable<PromptOptions['backend']>>
+  timeoutMs?: number
+}
+
+class BridgeAgentSessionTransport implements AgentSessionTransport {
+  constructor(
+    private readonly client: BridgeClient,
+    private readonly defaults: BridgeTransportDefaults = {},
+    private readonly direct = false,
+  ) {}
+
+  start(input: AgentSessionStart): AgentSession {
+    const isInline = typeof input.profile !== 'string'
+    const session = this.client.bridge({
+      harness: 'sandbox',
+      model: isInline
+        ? (this.direct ? undefined : 'sandbox')
+        : (input.profile as string),
+      unlock: input.unlock ?? this.defaults.unlock ?? process.env.BRIDGE_UNLOCK ?? '',
+      resume: input.resume,
+      bridgeUrl: input.bridgeUrl ?? this.defaults.bridgeUrl,
+      bridgeBearer: input.bridgeBearer ?? this.defaults.bridgeBearer,
+    })
+    const sandbox = isInline
+      ? { agentProfile: input.profile as AgentProfile, ...(this.direct && input.resume ? { sessionId: input.resume } : {}) }
+      : this.direct && input.resume
+        ? { sessionId: input.resume }
+        : undefined
+
+    return {
+      id: input.resume,
+      chat: (options) => session.chat(withSandbox(options, sandbox)),
+      chatStream: (options) => session.chatStream(withSandbox(options, sandbox)),
+    }
+  }
+}
+
+class SandboxSdkAgentSessionTransport implements AgentSessionTransport {
+  constructor(private readonly options: SandboxSdkTransportOptions) {}
+
+  start(input: AgentSessionStart): AgentSession {
+    const sandbox = this.options.sandbox
+    const sessionId = input.resume ?? this.options.sessionId
+    const promptOptions: PromptOptions = {
+      sessionId,
+      timeoutMs: this.options.timeoutMs,
+      backend: {
+        ...(this.options.backend ?? {}),
+        profile: input.profile,
+      },
+      context: input.workspace?.dir ? { workspaceDir: input.workspace.dir } : undefined,
+    }
+
+    return {
+      id: sessionId,
+      chat: async (options) => {
+        const result = await sandbox.prompt(lastUserText(options.messages), promptOptionsForTurn(promptOptions, options))
+        return completionFromPromptResult(result)
+      },
+      async *chatStream(options) {
+        for await (const event of sandbox.streamPrompt(lastUserText(options.messages), promptOptionsForTurn(promptOptions, options))) {
+          const text = textFromSandboxEvent(event)
+          if (text) yield chunkFromText(text)
+        }
+      },
+    }
+  }
+}
+
+export function routerBridgeTransport(client: BridgeClient, defaults: BridgeTransportDefaults = {}): AgentSessionTransport {
+  return new BridgeAgentSessionTransport(client, defaults, false)
+}
+
+export function localCliBridgeTransport(
+  clientOrConfig: BridgeClient | LocalCliBridgeTransportConfig,
+  defaults: BridgeTransportDefaults = {},
+): AgentSessionTransport {
+  const client = isLocalCliBridgeConfig(clientOrConfig)
+    ? TCloudClient.fromCliBridge(clientOrConfig)
+    : clientOrConfig
+  return new BridgeAgentSessionTransport(client, defaults, true)
+}
+
+export function sandboxSdkTransport(options: SandboxSdkTransportOptions): AgentSessionTransport {
+  return new SandboxSdkAgentSessionTransport(options)
+}
 
 /**
- * Run-loop around a sandbox-harness BridgeSession.
+ * Run-loop around a sandbox-capable transport session.
  *
  * - {@link Agent.run} returns `Promise<AgentRunResult>` — awaits the final
  *   verdict.
@@ -219,7 +349,19 @@ type BridgeClient = Pick<TCloudClient, 'bridge'>
  * `stream()`.
  */
 export class Agent {
-  constructor(private readonly client: BridgeClient, private readonly options: AgentRunOptions) {}
+  private readonly client?: BridgeClient
+  private readonly options: AgentRunOptions
+
+  constructor(options: AgentRunOptions)
+  constructor(client: BridgeClient, options: AgentRunOptions)
+  constructor(clientOrOptions: BridgeClient | AgentRunOptions, options?: AgentRunOptions) {
+    if (options) {
+      this.client = clientOrOptions as BridgeClient
+      this.options = options
+    } else {
+      this.options = clientOrOptions as AgentRunOptions
+    }
+  }
 
   /**
    * Execute the loop and return the final verdict. Never throws; failures
@@ -248,26 +390,21 @@ export class Agent {
     const criteria = this.options.criteria ?? []
     const budget = this.options.budget ?? {}
     const maxIter = budget.iterations ?? 8
-    const wantStream = this.options.stream !== false
-
-    const unlock = this.options.unlock ?? process.env.BRIDGE_UNLOCK ?? ''
-    const isInline = typeof this.options.profile !== 'string'
-    const session: BridgeSession = this.client.bridge({
-      harness: 'sandbox',
-      model: isInline ? 'sandbox' : (this.options.profile as string),
-      unlock,
+    const wantStream = this.options.stream !== false && budget.usd == null
+    const transport = this.options.transport ?? (this.client ? routerBridgeTransport(this.client) : undefined)
+    if (!transport) {
+      throw new Error('Agent requires either agent(client, options) or options.transport')
+    }
+    const session = await transport.start({
+      profile: this.options.profile,
       resume: this.options.resume,
+      unlock: this.options.unlock,
       bridgeUrl: this.options.bridgeUrl,
       bridgeBearer: this.options.bridgeBearer,
+      workspace: this.options.workspace,
     })
 
-    const providerOptions: Record<string, unknown> | undefined = isInline
-      ? { agent_profile: this.options.profile as AgentProfile }
-      : undefined
-
-    let nextUserTurn = this.options.workspace?.dir
-      ? `${this.options.brief}\n\n[workspace: ${this.options.workspace.dir}]`
-      : this.options.brief
+    let nextUserTurn = this.options.brief
 
     let iteration = 0
     let usd: number | null = null
@@ -318,7 +455,6 @@ export class Agent {
           // Streaming path — accumulate deltas + yield them as they arrive.
           const chunks = session.chatStream({
             messages: [userMsg],
-            ...(providerOptions ? { providerOptions } : {}),
           })
           for await (const chunk of chunks) {
             const delta = extractDelta(chunk)
@@ -331,7 +467,6 @@ export class Agent {
           // Non-streaming fallback — single full-message delta.
           const completion = await session.chat({
             messages: [userMsg],
-            ...(providerOptions ? { providerOptions } : {}),
           })
           assistantContent = completion.choices?.[0]?.message?.content ?? ''
           if (assistantContent) {
@@ -400,9 +535,11 @@ export class Agent {
   }
 }
 
-/** Convenience factory that mirrors the `TCloudClient.bridge()` style. */
-export function agent(client: BridgeClient, options: AgentRunOptions): Agent {
-  return new Agent(client, options)
+/** Convenience factory. `agent(client, opts)` uses router bridge; `agent(opts)` requires `opts.transport`. */
+export function agent(client: BridgeClient, options: AgentRunOptions): Agent
+export function agent(options: AgentRunOptions): Agent
+export function agent(clientOrOptions: BridgeClient | AgentRunOptions, options?: AgentRunOptions): Agent {
+  return options ? new Agent(clientOrOptions as BridgeClient, options) : new Agent(clientOrOptions as AgentRunOptions)
 }
 
 /** Pull the text delta out of a ChatCompletionChunk. Tolerant of odd shapes. */
@@ -426,4 +563,84 @@ function extractUsd(completion: { usage?: unknown }): number | null {
   if (typeof usage.cost_usd === 'number') return usage.cost_usd
   if (typeof usage.costUsd === 'number') return usage.costUsd
   return null
+}
+
+function isLocalCliBridgeConfig(value: BridgeClient | LocalCliBridgeTransportConfig): value is LocalCliBridgeTransportConfig {
+  return typeof (value as LocalCliBridgeTransportConfig).url === 'string'
+}
+
+function withSandbox(
+  options: AgentSessionChatOptions,
+  sandbox: AgentSessionChatOptions['sandbox'] | undefined,
+): AgentSessionChatOptions {
+  return sandbox ? { ...options, sandbox: mergeSandbox(options.sandbox, sandbox) } : options
+}
+
+function mergeSandbox(
+  base: AgentSessionChatOptions['sandbox'] | undefined,
+  overlay: NonNullable<AgentSessionChatOptions['sandbox']>,
+): NonNullable<AgentSessionChatOptions['sandbox']> {
+  return { ...(base ?? {}), ...overlay }
+}
+
+function promptOptionsForTurn(base: PromptOptions, turn: AgentSessionChatOptions): PromptOptions {
+  return {
+    ...base,
+    sessionId: turn.sandbox?.sessionId ?? base.sessionId,
+    backend: {
+      ...(base.backend ?? {}),
+      ...(turn.sandbox?.agentProfile ? { profile: turn.sandbox.agentProfile } : {}),
+    },
+  }
+}
+
+function lastUserText(messages: ChatMessage[]): string {
+  const last = [...messages].reverse().find((m) => m.role === 'user')
+  if (!last) return ''
+  return typeof last.content === 'string' ? last.content : JSON.stringify(last.content)
+}
+
+function completionFromPromptResult(result: PromptResult): ChatCompletion {
+  if (!result.success) {
+    throw new Error(result.error ?? 'Sandbox prompt failed')
+  }
+  return {
+    id: result.traceId ?? `sandbox-prompt-${Date.now()}`,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: 'sandbox-sdk',
+    choices: [
+      {
+        index: 0,
+        message: { role: 'assistant', content: result.response ?? '' },
+        finish_reason: 'stop',
+      },
+    ],
+    usage: result.usage
+      ? {
+          prompt_tokens: result.usage.inputTokens,
+          completion_tokens: result.usage.outputTokens,
+          total_tokens: result.usage.inputTokens + result.usage.outputTokens,
+        }
+      : undefined,
+  }
+}
+
+function chunkFromText(text: string): ChatCompletionChunk {
+  return {
+    id: `sandbox-chunk-${Date.now()}`,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model: 'sandbox-sdk',
+    choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+  }
+}
+
+function textFromSandboxEvent(event: SandboxEvent): string {
+  const data = event.data as Record<string, unknown>
+  for (const key of ['text', 'delta', 'content', 'message', 'response']) {
+    const value = data[key]
+    if (typeof value === 'string') return value
+  }
+  return ''
 }

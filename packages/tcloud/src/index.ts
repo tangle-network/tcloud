@@ -37,6 +37,7 @@
 
 import { TCloudClient, TCloudError, type RotatingClientConfig } from './client'
 import { createShieldedClient, generateWallet } from './shielded'
+import { TCloudSandbox, type TCloudSandboxConfig } from './sandbox'
 import type { TCloudConfig, ShieldedConfig } from './types'
 
 export class TCloud extends TCloudClient {
@@ -101,6 +102,25 @@ export class TCloud extends TCloudClient {
    * ```
    */
   static generateWallet = generateWallet
+
+  /**
+   * Create a Sandbox SDK client using this TCloud client's API key by default.
+   *
+   * ```ts
+   * const tcloud = new TCloud({ apiKey })
+   * const sandbox = await tcloud.sandbox().create({ name: 'runner' })
+   * ```
+   */
+  sandbox(config: Partial<TCloudSandboxConfig> = {}): TCloudSandbox {
+    const apiKey = config.apiKey ?? this.apiKey
+    if (!apiKey) throw new Error('TCloud.sandbox() requires an apiKey')
+    return new TCloudSandbox({ ...config, apiKey })
+  }
+
+  /** Create a standalone Sandbox SDK client. */
+  static sandbox(config: TCloudSandboxConfig): TCloudSandbox {
+    return new TCloudSandbox(config)
+  }
 }
 
 // Re-export everything
@@ -141,6 +161,7 @@ export type {
   ChatOptions,
   GatewayOptions,
   BridgeOptions,
+  SandboxChatOptions,
   ChatCompletion,
   ChatCompletionChunk,
   Model,
