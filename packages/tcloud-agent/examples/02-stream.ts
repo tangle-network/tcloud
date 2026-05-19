@@ -27,11 +27,12 @@ const profile: AgentProfile = {
 
 async function main() {
   const client = new TCloud({ apiKey: process.env.TCLOUD_API_KEY })
+  const workspace = process.env.WORKSPACE_DIR ?? process.cwd()
 
   const events = agent(client, {
     profile,
-    brief: 'Verify the scaffold at the mounted workspace builds cleanly.',
-    workspace: { dir: process.env.WORKSPACE_DIR ?? process.cwd() },
+    brief: `Verify the scaffold at ${workspace} builds cleanly.`,
+    workspace: { dir: workspace },
     criteria: [
       { name: 'states-verdict', check: async (ctx) => /VERDICT:\s*(PASS|FAIL)/i.test(ctx.lastMessage) ? { ok: true } : { ok: false, reason: 'need VERDICT line' } },
       { name: 'passed',         check: async (ctx) => /VERDICT:\s*PASS/i.test(ctx.lastMessage) ? { ok: true } : { ok: false, reason: 'retry' } },
@@ -47,12 +48,6 @@ async function main() {
         break
       case 'message.delta':
         process.stdout.write(ev.text)
-        break
-      case 'tool.call.start':
-        process.stdout.write(`\n[tool ▶ ${ev.tool}]\n`)
-        break
-      case 'tool.call.result':
-        process.stdout.write(`\n[tool ${ev.status === 'completed' ? '✓' : '✗'} ${ev.tool}]\n`)
         break
       case 'criterion.check':
         process.stdout.write(`\n[gate ${ev.ok ? 'pass' : 'fail'}] ${ev.name}${ev.reason ? ` — ${ev.reason}` : ''}\n`)

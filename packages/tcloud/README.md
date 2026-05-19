@@ -94,7 +94,7 @@ for await (const chunk of client.askStream('write a haiku', 'kimi-code/kimi-for-
 }
 ```
 
-See [`examples/14-direct-cli-bridge.ts`](./examples/14-direct-cli-bridge.ts) for the full pattern. For session-resumable agentic dispatches (file edits, multi-turn coding), see [`examples/12-bridge-sessions.ts`](./examples/12-bridge-sessions.ts) which uses the router-mediated `tcloud.bridge({...})` API.
+See [`examples/14-direct-cli-bridge.ts`](./examples/14-direct-cli-bridge.ts) for the full pattern. Direct cli-bridge clients also support `client.bridge({ harness, model, resume })`; in direct mode the SDK sends `<harness>/<model>` and maps `resume` to cli-bridge's `session_id`.
 
 ### Model Selection
 

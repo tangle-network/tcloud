@@ -49,6 +49,9 @@ import { PrivateRouter, type OperatorInfo, type RoutingStrategy } from './privat
 /** Non-enumerable marker set on clients constructed via {@link TCloudClient.rotating}. */
 const ROTATING_MARKER = '__tcloudRotating'
 
+/** Non-enumerable marker set on clients constructed via {@link TCloudClient.fromCliBridge}. */
+const DIRECT_CLI_BRIDGE_MARKER = '__tcloudDirectCliBridge'
+
 /** Rotation knobs for {@link TCloudClient.rotating}. */
 export interface RotatingRoutingConfig {
   /** Router strategy. Defaults to `'min-exposure'`. */
@@ -160,6 +163,45 @@ const DEFAULT_TIMEOUT_MS = 60_000
 
 const DEFAULT_PLATFORM_URL = 'https://id.tangle.tools'
 
+const PROTECTED_PROVIDER_OPTION_KEYS = new Set([
+  'model',
+  'messages',
+  'temperature',
+  'max_tokens',
+  'maxTokens',
+  'stream',
+  'stop',
+  'top_p',
+  'topP',
+  'frequency_penalty',
+  'frequencyPenalty',
+  'presence_penalty',
+  'presencePenalty',
+  'response_format',
+  'responseFormat',
+  'tools',
+  'tool_choice',
+  'toolChoice',
+  'gateway',
+  'bridge',
+  'agent_profile',
+  'agentProfile',
+  'session_id',
+  'sessionId',
+])
+
+function sanitizeProviderOptions(providerOptions: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!providerOptions) return {}
+  for (const key of Object.keys(providerOptions)) {
+    if (PROTECTED_PROVIDER_OPTION_KEYS.has(key)) {
+      throw new Error(
+        `providerOptions cannot override protected chat field "${key}"; use the typed ChatOptions field instead`,
+      )
+    }
+  }
+  return providerOptions
+}
+
 export class TCloudClient {
   readonly baseURL: string
   readonly platformURL: string
@@ -201,9 +243,10 @@ export class TCloudClient {
    * const reply = await client.ask('explain X', 'claude-code/sonnet')
    * ```
    *
-   * For session-resumable agentic dispatches (file edits, multi-turn
-   * coding), use the router-mediated `tcloud.bridge({...})` API instead
-   * (or POST to cli-bridge directly with `session_id` in the body).
+   * For session-resumable agentic dispatches, use `client.bridge(...)` on
+   * the returned direct client. `resume` is serialized to cli-bridge's
+   * `session_id` body field and the model wire format stays
+   * `<harness>/<model>` without the router-only `bridge/` prefix.
    */
   static fromCliBridge(opts: {
     /** cli-bridge base URL — `http://127.0.0.1:3344` for default local; can be any reachable URL. */
@@ -214,7 +257,14 @@ export class TCloudClient {
     config?: Omit<TCloudConfig, 'apiKey' | 'baseURL'>
   }): TCloudClient {
     const baseURL = opts.url.replace(/\/+$/, '') + '/v1'
-    return new TCloudClient({ ...(opts.config ?? {}), apiKey: opts.bearer, baseURL })
+    const client = new TCloudClient({ ...(opts.config ?? {}), apiKey: opts.bearer, baseURL })
+    Object.defineProperty(client, DIRECT_CLI_BRIDGE_MARKER, {
+      value: true,
+      enumerable: false,
+      configurable: false,
+      writable: false,
+    })
+    return client
   }
 
   /**
@@ -526,8 +576,8 @@ export class TCloudClient {
       }
     }
 
-    if (bridge) {
-      headers['X-Bridge-Unlock'] = bridge.unlock
+    if (bridge && !this._isDirectCliBridge()) {
+      headers['X-Bridge-Unlock'] = bridge.unlock ?? ''
       if (bridge.resume) headers['X-Resume'] = bridge.resume
       if (bridge.bridgeUrl) headers['X-Bridge-Url'] = bridge.bridgeUrl
       if (bridge.bridgeBearer) headers['X-Bridge-Bearer'] = bridge.bridgeBearer
@@ -542,6 +592,11 @@ export class TCloudClient {
    */
   private _effectiveModel(options: ChatOptions): string {
     if (options.bridge) {
+      if (this._isDirectCliBridge()) {
+        return options.bridge.model
+          ? `${options.bridge.harness}/${options.bridge.model}`
+          : options.bridge.harness
+      }
       return options.bridge.model
         ? `bridge/${options.bridge.harness}/${options.bridge.model}`
         : `bridge/${options.bridge.harness}`
@@ -551,7 +606,16 @@ export class TCloudClient {
 
   /** Build the chat completions request body */
   private _chatBody(options: ChatOptions, stream: boolean): string {
+    const providerOptions = sanitizeProviderOptions(options.providerOptions)
+    const sandboxBody: Record<string, unknown> = {}
+    if (options.sandbox?.agentProfile) sandboxBody.agent_profile = options.sandbox.agentProfile
+    if (options.sandbox?.sessionId) sandboxBody.session_id = options.sandbox.sessionId
+    if (this._isDirectCliBridge() && options.bridge?.resume && !sandboxBody.session_id) {
+      sandboxBody.session_id = options.bridge.resume
+    }
+
     return JSON.stringify({
+      ...providerOptions,
       model: this._effectiveModel(options),
       messages: options.messages,
       temperature: options.temperature,
@@ -565,7 +629,7 @@ export class TCloudClient {
       tools: options.tools,
       tool_choice: options.toolChoice,
       ...(options.gateway ? { gateway: options.gateway } : {}),
-      ...options.providerOptions,
+      ...sandboxBody,
     })
   }
 
@@ -658,7 +722,14 @@ export class TCloudClient {
         'for privacy-preserving sandbox execution instead.'
       )
     }
-    return new BridgeSession(this, cfg)
+    if (!this._isDirectCliBridge() && cfg.unlock == null) {
+      throw new Error('Bridge unlock is required for router-mediated bridge sessions')
+    }
+    return new BridgeSession(this, cfg, this._isDirectCliBridge())
+  }
+
+  private _isDirectCliBridge(): boolean {
+    return (this as unknown as Record<string, unknown>)[DIRECT_CLI_BRIDGE_MARKER] === true
   }
 
   /**
@@ -1366,7 +1437,7 @@ const ALL_TIERS: TierConfig[] = [
  * ```
  */
 export class BridgeSession {
-  constructor(private readonly client: TCloudClient, private readonly cfg: BridgeOptions) {}
+  constructor(private readonly client: TCloudClient, private readonly cfg: BridgeOptions, private readonly direct = false) {}
 
   /** Full chat completion (non-streaming). */
   async chat(options: Omit<ChatOptions, 'bridge'>): Promise<ChatCompletion> {
@@ -1406,17 +1477,18 @@ export class BridgeSession {
 
   /** Clone with a new resume id — same harness, different logical conversation. */
   withResume(resume: string): BridgeSession {
-    return new BridgeSession(this.client, { ...this.cfg, resume })
+    return new BridgeSession(this.client, { ...this.cfg, resume }, this.direct)
   }
 
   /** Clone with a different model inside the same harness. */
   withModel(model: string): BridgeSession {
-    return new BridgeSession(this.client, { ...this.cfg, model })
+    return new BridgeSession(this.client, { ...this.cfg, model }, this.direct)
   }
 
   /** The effective model id that will land on the router (`bridge/<harness>/<model>`). */
   get model(): string {
-    return this.cfg.model ? `bridge/${this.cfg.harness}/${this.cfg.model}` : `bridge/${this.cfg.harness}`
+    const prefix = this.direct ? '' : 'bridge/'
+    return this.cfg.model ? `${prefix}${this.cfg.harness}/${this.cfg.model}` : `${prefix}${this.cfg.harness}`
   }
 
   /** The resume id currently bound to this session, if any. */

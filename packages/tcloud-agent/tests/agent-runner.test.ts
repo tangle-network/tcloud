@@ -4,6 +4,9 @@ import type { ChatCompletion, ChatCompletionChunk } from '@tangle-network/tcloud
 import {
   Agent,
   agent,
+  localCliBridgeTransport,
+  routerBridgeTransport,
+  sandboxSdkTransport,
   type AgentEvent,
   type AgentRunCriterion,
   type AgentRunOptions,
@@ -193,7 +196,7 @@ describe('Agent.run', () => {
     expect(calls[0].chats[0].providerOptions).toBeUndefined()
   })
 
-  it('routes inline AgentProfile to model "sandbox" + providerOptions.agent_profile', async () => {
+  it('routes inline AgentProfile through typed sandbox agentProfile', async () => {
     const inline = {
       name: 'haiku-bot',
       prompt: { systemPrompt: 'You write haiku.' },
@@ -206,9 +209,9 @@ describe('Agent.run', () => {
     await new Agent(client as any, { profile: inline, brief: 'topic: ocean' }).run()
 
     expect(calls[0].cfg.model).toBe('sandbox')
-    const provider = calls[0].chats[0].providerOptions as { agent_profile: AgentProfile }
-    expect(provider.agent_profile).toStrictEqual(inline)
-    expect((provider.agent_profile as any).confidential).toStrictEqual({ tee: 'tdx' })
+    const sandbox = calls[0].chats[0].sandbox as { agentProfile: AgentProfile }
+    expect(sandbox.agentProfile).toStrictEqual(inline)
+    expect((sandbox.agentProfile as any).confidential).toStrictEqual({ tee: 'tdx' })
   })
 
   it('captures error verdict when the bridge throws', async () => {
@@ -223,7 +226,7 @@ describe('Agent.run', () => {
     expect(result.iterations).toBe(1)
   })
 
-  it('appends workspace dir to the first user turn and surfaces it on context', async () => {
+  it('surfaces workspace dir on context without appending it to the prompt', async () => {
     const { client } = makeFakeClient([makeCompletion('ok')])
     let seenDir: string | undefined
     const result = await new Agent(client as any, {
@@ -243,7 +246,76 @@ describe('Agent.run', () => {
 
     expect(result.verdict).toBe('verified')
     expect(seenDir).toBe('/tmp/my-ws')
-    expect(result.transcript[0].content).toContain('[workspace: /tmp/my-ws]')
+    expect(result.transcript[0].content).toBe('review the repo')
+  })
+
+  it('runs with an explicit transport and no bridge client', async () => {
+    const transport = routerBridgeTransport(makeFakeClient([makeCompletion('ok')]).client as any)
+    const result = await agent({
+      transport,
+      profile: 'sf-proposer',
+      brief: 'hi',
+    }).run()
+    expect(result.verdict).toBe('verified')
+  })
+
+  it('local cli-bridge transport uses direct sandbox model shape and session id', async () => {
+    const { client, calls } = makeFakeClient([makeCompletion('ok')])
+    const result = await agent({
+      transport: localCliBridgeTransport(client as any),
+      profile: 'sf-proposer',
+      brief: 'hi',
+      resume: 'feature-1',
+    }).run()
+    expect(result.verdict).toBe('verified')
+    expect(calls[0].cfg.model).toBe('sf-proposer')
+    expect(calls[0].chats[0].sandbox).toStrictEqual({ sessionId: 'feature-1' })
+  })
+
+  it('Sandbox SDK transport maps prompt responses into agent completions', async () => {
+    const prompts: Array<{ message: string; options: unknown }> = []
+    const sandbox = {
+      async prompt(message: string, options: unknown) {
+        prompts.push({ message, options })
+        return {
+          success: true,
+          response: 'sdk ok',
+          durationMs: 12,
+          usage: { inputTokens: 3, outputTokens: 4 },
+        }
+      },
+      async *streamPrompt() {
+        throw new Error('streamPrompt should not be used when stream:false')
+      },
+    }
+    const result = await agent({
+      transport: sandboxSdkTransport({ sandbox: sandbox as any }),
+      profile: 'sf-proposer',
+      brief: 'hi',
+      resume: 'sdk-session',
+      stream: false,
+    }).run()
+    expect(result.verdict).toBe('verified')
+    expect(result.usd).toBeNull()
+    expect(prompts[0].message).toBe('hi')
+    expect(prompts[0].options).toMatchObject({
+      sessionId: 'sdk-session',
+      backend: { profile: 'sf-proposer' },
+    })
+  })
+
+  it('forces non-streaming when usd budget is set so cost accounting can run', async () => {
+    const { client, calls } = makeFakeClient([
+      makeCompletion('expensive', { usage: { cost_usd: 2 } as any }),
+    ])
+    const result = await agent(client as any, {
+      profile: 'sf-proposer',
+      brief: 'hi',
+      budget: { usd: 1 },
+    }).run()
+    expect(result.verdict).toBe('budget-exhausted')
+    expect(result.usd).toBe(2)
+    expect(calls[0].chats[0].__mode).toBe('chat')
   })
 })
 

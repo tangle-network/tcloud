@@ -166,18 +166,32 @@ describe('chat()', () => {
     expect(body.custom_field).toBe('value')
   })
 
-  it('providerOptions do not override standard fields', async () => {
+  it('rejects providerOptions that try to override protected standard fields', async () => {
     globalThis.fetch = mockFetchJson(COMPLETION)
     const client = new TCloudClient({ apiKey: 'sk-tan-test' })
-    await client.chat({
+    await expect(client.chat({
       model: 'real-model',
       messages: [{ role: 'user', content: 'hi' }],
       providerOptions: { model: 'override-attempt' },
+    })).rejects.toThrow('providerOptions cannot override protected chat field "model"')
+    expect((globalThis.fetch as any).mock.calls).toHaveLength(0)
+  })
+
+  it('serializes typed sandbox fields without providerOptions body smuggling', async () => {
+    globalThis.fetch = mockFetchJson(COMPLETION)
+    const client = new TCloudClient({ apiKey: 'sk-tan-test' })
+    const agentProfile = { name: 'haiku-bot', prompt: { systemPrompt: 'Write haiku.' } }
+    await client.chat({
+      model: 'sandbox',
+      messages: [{ role: 'user', content: 'hi' }],
+      sandbox: {
+        agentProfile: agentProfile as any,
+        sessionId: 'session-1',
+      },
     })
     const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body)
-    // providerOptions spread happens after standard fields, so it would override
-    // This tests current behavior — providerOptions wins (intentional escape hatch)
-    expect(body.model).toBe('override-attempt')
+    expect(body.agent_profile).toEqual(agentProfile)
+    expect(body.session_id).toBe('session-1')
   })
 
   it('sends responseFormat', async () => {
@@ -189,6 +203,27 @@ describe('chat()', () => {
     })
     const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body)
     expect(body.response_format).toEqual({ type: 'json_object' })
+  })
+
+  it('maps direct cli-bridge bridge sessions to harness model and session_id', async () => {
+    const fn = mockFetchJson(COMPLETION)
+    globalThis.fetch = fn
+    const client = TCloudClient.fromCliBridge({
+      url: 'http://127.0.0.1:3344',
+      bearer: 'bridge-secret',
+    })
+    const session = client.bridge({ harness: 'sandbox', model: 'sf-proposer', resume: 'feature-1' })
+    expect(session.model).toBe('sandbox/sf-proposer')
+    await session.chat({ messages: [{ role: 'user', content: 'hi' }] })
+
+    const [url, init] = fn.mock.calls[0]
+    expect(url).toBe('http://127.0.0.1:3344/v1/chat/completions')
+    const headers = init.headers
+    expect(headers.Authorization).toBe('Bearer bridge-secret')
+    expect(headers['X-Bridge-Unlock']).toBeUndefined()
+    const body = JSON.parse(init.body)
+    expect(body.model).toBe('sandbox/sf-proposer')
+    expect(body.session_id).toBe('feature-1')
   })
 })
 

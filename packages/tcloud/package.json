@@ -11,6 +11,7 @@
   },
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": {
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
@@ -21,6 +22,7 @@
       }
     },
     "./attestation": {
+      "types": "./dist/attestation.d.ts",
       "import": {
         "types": "./dist/attestation.d.ts",
         "default": "./dist/attestation.js"
@@ -31,6 +33,7 @@
       }
     },
     "./sandbox": {
+      "types": "./dist/sandbox.d.ts",
       "import": {
         "types": "./dist/sandbox.d.ts",
         "default": "./dist/sandbox.js"
@@ -41,6 +44,7 @@
       }
     },
     "./shielded": {
+      "types": "./dist/shielded.d.ts",
       "import": {
         "types": "./dist/shielded.d.ts",
         "default": "./dist/shielded.js"
@@ -51,6 +55,7 @@
       }
     },
     "./instance": {
+      "types": "./dist/instance.d.ts",
       "node": {
         "import": {
           "types": "./dist/instance.d.ts",
