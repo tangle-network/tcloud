@@ -199,6 +199,32 @@ describe('imageGenerate()', () => {
   })
 })
 
+describe('imagesEdit()', () => {
+  let originalFetch: typeof globalThis.fetch
+  beforeEach(() => { originalFetch = globalThis.fetch })
+  afterEach(() => { globalThis.fetch = originalFetch })
+
+  it('sends multipart image edit request', async () => {
+    const fn = mockFetch({ created: 1, data: [{ url: 'https://example.com/edit.png' }] })
+    globalThis.fetch = fn
+    const client = new TCloudClient({ apiKey: 'sk-tan-test' })
+    await client.imagesEdit({
+      prompt: 'make it cinematic',
+      image: { data: 'aGVsbG8=', mediaType: 'image/png', filename: 'input.png' },
+      size: '1024x1024',
+    })
+    const [url, init] = fn.mock.calls[0]
+    expect(url).toBe('https://router.tangle.tools/v1/images/edits')
+    expect(init.body).toBeInstanceOf(FormData)
+    const form = init.body as FormData
+    expect(form.get('prompt')).toBe('make it cinematic')
+    expect(form.get('model')).toBe('gpt-image-2')
+    expect(form.get('size')).toBe('1024x1024')
+    expect(form.getAll('image[]')).toHaveLength(1)
+    expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined()
+  })
+})
+
 describe('rerank()', () => {
   let originalFetch: typeof globalThis.fetch
   beforeEach(() => { originalFetch = globalThis.fetch })
@@ -230,6 +256,49 @@ describe('speech()', () => {
     const body = JSON.parse(fn.mock.calls[0][1].body)
     expect(body.input).toBe('hello')
     expect(body.voice).toBe('nova')
+  })
+})
+
+describe('video generation', () => {
+  let originalFetch: typeof globalThis.fetch
+  beforeEach(() => { originalFetch = globalThis.fetch })
+  afterEach(() => { globalThis.fetch = originalFetch })
+
+  it('sends provider-specific video parameters', async () => {
+    const fn = mockFetch({ id: 'orv_job', status: 'pending' })
+    globalThis.fetch = fn
+    const client = new TCloudClient({ apiKey: 'sk-tan-test' })
+    await client.videoGenerate({
+      provider: 'kling',
+      model: 'kling-v2-master',
+      prompt: 'product reveal',
+      duration: 5,
+      resolution: '720p',
+      aspect_ratio: '16:9',
+      image_url: 'https://cdn.example.com/frame.png',
+      generate_audio: true,
+    })
+
+    expect(fn.mock.calls[0][0]).toBe('https://router.tangle.tools/v1/video/generate')
+    const body = JSON.parse(fn.mock.calls[0][1].body)
+    expect(body).toMatchObject({
+      provider: 'kling',
+      model: 'kling-v2-master',
+      prompt: 'product reveal',
+      duration: 5,
+      resolution: '720p',
+      aspect_ratio: '16:9',
+      image_url: 'https://cdn.example.com/frame.png',
+      generate_audio: true,
+    })
+  })
+
+  it('polls video jobs by path id', async () => {
+    const fn = mockFetch({ id: 'orv_job', status: 'completed' })
+    globalThis.fetch = fn
+    const client = new TCloudClient({ apiKey: 'sk-tan-test' })
+    await client.videoStatus('orv_job')
+    expect(fn.mock.calls[0][0]).toBe('https://router.tangle.tools/v1/video/orv_job')
   })
 })
 

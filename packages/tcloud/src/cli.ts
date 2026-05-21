@@ -36,8 +36,16 @@ function ensureDir() {
 
 function loadConfig(): CLIConfig {
   ensureDir()
-  if (fs.existsSync(CONFIG_FILE)) return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'))
-  return { apiUrl: 'https://router.tangle.tools', defaultModel: 'gpt-4o-mini', chainId: 3799 }
+  const fileConfig: CLIConfig = fs.existsSync(CONFIG_FILE)
+    ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'))
+    : { apiUrl: 'https://router.tangle.tools', defaultModel: 'gpt-4o-mini', chainId: 3799 }
+  return {
+    ...fileConfig,
+    ...(process.env.TANGLE_ROUTER_URL ? { apiUrl: process.env.TANGLE_ROUTER_URL.replace(/\/v1\/?$/, '') } : {}),
+    ...(process.env.TCLOUD_API_URL ? { apiUrl: process.env.TCLOUD_API_URL.replace(/\/v1\/?$/, '') } : {}),
+    ...(process.env.TANGLE_API_KEY ? { apiKey: process.env.TANGLE_API_KEY } : {}),
+    ...(process.env.TCLOUD_API_KEY ? { apiKey: process.env.TCLOUD_API_KEY } : {}),
+  }
 }
 
 function saveConfig(c: CLIConfig) {
@@ -101,6 +109,18 @@ function packageVersion(): string {
     // Keep the CLI usable if package metadata is unavailable in a dev bundle.
   }
   return '0.0.0'
+}
+
+function printJson(value: unknown) {
+  console.log(JSON.stringify(value, null, 2))
+}
+
+function firstImageResult(resp: { data?: { url?: string; b64_json?: string }[] }): string | undefined {
+  return resp.data?.[0]?.url ?? resp.data?.[0]?.b64_json
+}
+
+function videoResultUrl(resp: { url?: string; video_url?: string; id?: string }): string | undefined {
+  return resp.url ?? resp.video_url ?? resp.id
 }
 
 // ─── CLI Setup ──────────────────────────────────────────────
@@ -374,6 +394,163 @@ program.command('models')
       models.slice(0, 30).forEach(m => console.log(`  ${m.id.padEnd(40)} ${m.name || ''}`))
       if (models.length > 30) console.log(`  ... +${models.length - 30} more`)
     } catch (e: any) { console.error('Error:', e.message) }
+  })
+
+// ── media generation ──
+
+program.command('image-generate')
+  .description('Generate an image')
+  .requiredOption('-p, --prompt <prompt>', 'Prompt')
+  .option('-m, --model <model>', 'Image model')
+  .option('--size <size>', 'Output size')
+  .option('--quality <quality>', 'Output quality')
+  .option('-n, --count <n>', 'Number of images')
+  .option('--response-format <format>', 'url or b64_json')
+  .option('--json', 'Print raw JSON response')
+  .action(async (opts) => {
+    const client = getClient() as TCloud
+    try {
+      const resp = await client.imageGenerate({
+        prompt: opts.prompt,
+        model: opts.model,
+        size: opts.size,
+        quality: opts.quality,
+        n: optionalNumber(opts.count),
+        response_format: opts.responseFormat,
+      })
+      if (opts.json) {
+        printJson(resp)
+        return
+      }
+      const result = firstImageResult(resp)
+      if (result) console.log(result)
+      else printJson(resp)
+    } catch (e: any) {
+      console.error('Error:', e.message)
+      process.exit(1)
+    }
+  })
+
+program.command('video-generate')
+  .description('Generate a video')
+  .requiredOption('-p, --prompt <prompt>', 'Prompt')
+  .option('-m, --model <model>', 'Video model/provider')
+  .option('--provider <provider>', 'Video provider, e.g. kling or runway')
+  .option('--duration <seconds>', 'Duration in seconds')
+  .option('--resolution <resolution>', 'Output resolution, e.g. 720p or 1080p')
+  .option('--aspect-ratio <ratio>', 'Output aspect ratio, e.g. 16:9 or 9:16')
+  .option('--size <size>', 'Exact output size, e.g. 1280x720')
+  .option('--image-url <url>', 'Reference image URL')
+  .option('--generate-audio', 'Generate audio when the model supports it')
+  .option('--seed <seed>', 'Deterministic seed')
+  .option('--callback-url <url>', 'Webhook callback URL')
+  .option('--json', 'Print raw JSON response')
+  .action(async (opts) => {
+    const client = getClient() as TCloud
+    try {
+      const resp = await client.videoGenerate({
+        prompt: opts.prompt,
+        model: opts.model,
+        provider: opts.provider,
+        duration: optionalNumber(opts.duration),
+        resolution: opts.resolution,
+        aspect_ratio: opts.aspectRatio,
+        size: opts.size,
+        image_url: opts.imageUrl,
+        generate_audio: opts.generateAudio,
+        seed: optionalNumber(opts.seed),
+        callback_url: opts.callbackUrl,
+      })
+      if (opts.json) {
+        printJson(resp)
+        return
+      }
+      const result = videoResultUrl(resp)
+      if (result) console.log(result)
+      else printJson(resp)
+    } catch (e: any) {
+      console.error('Error:', e.message)
+      process.exit(1)
+    }
+  })
+
+program.command('speech')
+  .description('Generate speech audio')
+  .requiredOption('-i, --input <text>', 'Input text')
+  .option('-m, --model <model>', 'Speech model')
+  .option('--voice <voice>', 'Voice')
+  .option('-o, --output <file>', 'Output file', 'speech.mp3')
+  .option('--json', 'Print JSON metadata')
+  .action(async (opts) => {
+    const client = getClient() as TCloud
+    try {
+      const audio = await client.speech({
+        input: opts.input,
+        model: opts.model,
+        voice: opts.voice,
+      })
+      fs.writeFileSync(opts.output, Buffer.from(audio))
+      const result = { output: opts.output, bytes: audio.byteLength }
+      if (opts.json) printJson(result)
+      else console.log(opts.output)
+    } catch (e: any) {
+      console.error('Error:', e.message)
+      process.exit(1)
+    }
+  })
+
+program.command('transcribe')
+  .description('Transcribe an audio file')
+  .argument('<file>', 'Audio file')
+  .option('-m, --model <model>', 'Transcription model')
+  .option('--language <language>', 'Language hint')
+  .option('--prompt <prompt>', 'Prompt hint')
+  .option('--json', 'Print raw JSON response')
+  .action(async (file, opts) => {
+    const client = getClient() as TCloud
+    try {
+      const data = fs.readFileSync(file)
+      const blob = new Blob([data])
+      const resp = await client.transcribe(blob, {
+        model: opts.model,
+        language: opts.language,
+        prompt: opts.prompt,
+      })
+      if (opts.json) printJson(resp)
+      else console.log(resp.text)
+    } catch (e: any) {
+      console.error('Error:', e.message)
+      process.exit(1)
+    }
+  })
+
+program.command('avatar-generate')
+  .description('Generate an avatar video')
+  .requiredOption('--audio-url <url>', 'Narration audio URL')
+  .option('--image-url <url>', 'Face image URL')
+  .option('--avatar-id <id>', 'Preset avatar ID')
+  .option('--duration <seconds>', 'Target duration in seconds')
+  .option('--output-format <format>', 'Output format')
+  .option('--json', 'Print raw JSON response')
+  .action(async (opts) => {
+    const client = getClient() as TCloud
+    try {
+      const resp = await client.avatarGenerate({
+        audio_url: opts.audioUrl,
+        image_url: opts.imageUrl,
+        avatar_id: opts.avatarId,
+        duration_seconds: optionalNumber(opts.duration),
+        output_format: opts.outputFormat,
+      })
+      if (opts.json) {
+        printJson(resp)
+        return
+      }
+      console.log(resp.result?.video_url ?? resp.job_id)
+    } catch (e: any) {
+      console.error('Error:', e.message)
+      process.exit(1)
+    }
   })
 
 // ── operators ──

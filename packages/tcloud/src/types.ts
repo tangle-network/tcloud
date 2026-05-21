@@ -213,9 +213,18 @@ export interface BatchJobResponse {
 
 export interface VideoGenerateOptions {
   model?: string
+  provider?: string | Record<string, unknown>
   prompt: string
   duration?: number
   resolution?: string
+  aspect_ratio?: string
+  size?: string
+  image_url?: string
+  frame_images?: Array<Record<string, unknown>>
+  input_references?: Array<Record<string, unknown>>
+  generate_audio?: boolean
+  seed?: number
+  callback_url?: string
 }
 
 export interface VideoResponse {
