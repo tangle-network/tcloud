@@ -191,6 +191,19 @@ console.log(results.data[0].title)
 console.log(results.citations)
 ```
 
+Use search inside chat with either the typed gateway shorthand or OpenRouter-compatible plugins:
+
+```ts
+await client.ask('What changed in Tangle this week?', {
+  webSearch: { provider: 'exa', maxResults: 5, searchRecency: 'week' },
+})
+
+await client.chat({
+  messages: [{ role: 'user', content: 'Summarize recent AI video model releases.' }],
+  plugins: [{ id: 'web', engine: 'parallel', max_results: 5 }],
+})
+```
+
 ### Video & Avatar Generation
 
 ```ts
