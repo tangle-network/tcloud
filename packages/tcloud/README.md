@@ -14,6 +14,7 @@ Zero framework dependencies. Pure `fetch` + SSE. Works in Node.js, Deno, Bun, an
   - [Full Chat Completion](#full-chat-completion)
   - [Private Inference](#private-inference)
   - [Embeddings](#embeddings)
+  - [Web Search](#web-search)
   - [Video & Avatar Generation](#video--avatar-generation)
   - [Async Jobs](#async-jobs)
   - [Operator Routing](#operator-routing)
@@ -175,6 +176,19 @@ const response = await client.embeddings({
 }) // returns EmbeddingResponse
 // EmbeddingResponse: { object, data: [{ object, embedding: number[], index }], model, usage }
 console.log(response.data[0].embedding.length) // 1536
+```
+
+### Web Search
+
+```ts
+const results = await client.search({
+  query: 'latest Tangle docs',
+  provider: 'exa',
+  maxResults: 5,
+})
+
+console.log(results.data[0].title)
+console.log(results.citations)
 ```
 
 ### Video & Avatar Generation
@@ -345,6 +359,7 @@ tcloud chat                                # Interactive mode
 ```bash
 tcloud models                  # List available models
 tcloud models -s llama         # Search models
+tcloud search "Tangle docs" --provider exa --max-results 5
 tcloud operators               # List active operators
 ```
 

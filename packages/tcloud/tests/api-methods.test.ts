@@ -259,6 +259,54 @@ describe('speech()', () => {
   })
 })
 
+describe('search()', () => {
+  let originalFetch: typeof globalThis.fetch
+  beforeEach(() => { originalFetch = globalThis.fetch })
+  afterEach(() => { globalThis.fetch = originalFetch })
+
+  it('calls /search with provider, recency, and domain filters', async () => {
+    const response = {
+      id: 'search_123',
+      object: 'search.result',
+      provider: 'exa',
+      model: 'exa',
+      query: 'rain docs',
+      data: [{ title: 'Rain', url: 'https://docs.rain.xyz', snippet: 'Docs' }],
+      citations: ['https://docs.rain.xyz'],
+      usage: { billed_cost: 0.002 },
+    }
+    const fn = mockFetch(response)
+    globalThis.fetch = fn
+    const client = new TCloudClient({
+      apiKey: 'sk-tan-test',
+      baseURL: 'https://router.test/v1',
+      retry: false,
+    })
+
+    const result = await client.search({
+      query: 'rain docs',
+      provider: 'exa',
+      maxResults: 3,
+      searchRecency: 'week',
+      includeDomains: ['docs.rain.xyz'],
+      excludeDomains: ['example.com'],
+    })
+
+    expect(result).toEqual(response)
+    expect(fn.mock.calls[0][0]).toBe('https://router.test/v1/search')
+    expect(fn.mock.calls[0][1].method).toBe('POST')
+    expect(fn.mock.calls[0][1].headers.Authorization).toBe('Bearer sk-tan-test')
+    expect(JSON.parse(fn.mock.calls[0][1].body)).toEqual({
+      query: 'rain docs',
+      provider: 'exa',
+      maxResults: 3,
+      searchRecency: 'week',
+      includeDomains: ['docs.rain.xyz'],
+      excludeDomains: ['example.com'],
+    })
+  })
+})
+
 describe('video generation', () => {
   let originalFetch: typeof globalThis.fetch
   beforeEach(() => { originalFetch = globalThis.fetch })

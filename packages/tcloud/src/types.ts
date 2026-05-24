@@ -139,6 +139,47 @@ export interface RerankResponse {
   results: { index: number; relevance_score: number }[]
 }
 
+export type SearchProvider = 'perplexity' | 'exa' | 'you' | 'parallel' | 'tavily' | 'brave'
+
+export type SearchRecency = 'day' | 'week' | 'month' | 'year'
+
+export interface SearchOptions {
+  query: string
+  provider?: SearchProvider
+  /** Alias accepted by the Router for provider-compatible clients. */
+  model?: SearchProvider
+  maxResults?: number
+  searchRecency?: SearchRecency
+  includeDomains?: string[]
+  excludeDomains?: string[]
+}
+
+export interface SearchHit {
+  title: string
+  url: string
+  snippet?: string
+  publishedAt?: string
+  score?: number
+  source?: string
+}
+
+export interface SearchResponse {
+  id: string
+  object: 'search.result' | string
+  provider: SearchProvider
+  model: string
+  query: string
+  data: SearchHit[]
+  citations: string[]
+  usage?: {
+    upstream_cost?: number
+    billed_cost?: number
+    gross_margin?: number
+    markup?: number
+    billing_units?: Record<string, unknown>
+  }
+}
+
 export interface CompletionOptions {
   model?: string
   prompt: string
@@ -326,6 +367,16 @@ export interface GatewayOptions {
   optimize?: 'cost' | 'latency' | 'quality'
   /** Disable response cache for this request. */
   cache?: boolean
+  /** Enable or configure router-managed web search for chat completions. */
+  webSearch?: boolean | {
+    provider?: SearchProvider
+    engine?: 'native' | 'exa' | 'parallel' | 'firecrawl'
+    maxResults?: number
+    searchPrompt?: string
+    includeDomains?: string[]
+    excludeDomains?: string[]
+    searchRecency?: SearchRecency
+  }
   /**
    * RSA / MoA: population-based quality amplification.
    * Spawns N parallel calls, aggregates K at a time, refines over T rounds.
