@@ -184,6 +184,8 @@ const PROTECTED_PROVIDER_OPTION_KEYS = new Set([
   'tools',
   'tool_choice',
   'toolChoice',
+  'plugins',
+  'webSearch',
   'gateway',
   'bridge',
   'agent_profile',
@@ -609,6 +611,14 @@ export class TCloudClient {
   /** Build the chat completions request body */
   private _chatBody(options: ChatOptions, stream: boolean): string {
     const providerOptions = sanitizeProviderOptions(options.providerOptions)
+    const gateway = options.gateway || options.webSearch !== undefined
+      ? {
+          ...options.gateway,
+          ...(options.webSearch !== undefined && options.gateway?.webSearch === undefined
+            ? { webSearch: options.webSearch }
+            : {}),
+        }
+      : undefined
     const sandboxBody: Record<string, unknown> = {}
     if (options.sandbox?.agentProfile) sandboxBody.agent_profile = options.sandbox.agentProfile
     if (options.sandbox?.sessionId) sandboxBody.session_id = options.sandbox.sessionId
@@ -630,7 +640,8 @@ export class TCloudClient {
       response_format: options.responseFormat,
       tools: options.tools,
       tool_choice: options.toolChoice,
-      ...(options.gateway ? { gateway: options.gateway } : {}),
+      plugins: options.plugins,
+      ...(gateway ? { gateway } : {}),
       ...sandboxBody,
     })
   }

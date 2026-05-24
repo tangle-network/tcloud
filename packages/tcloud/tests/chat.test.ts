@@ -140,6 +140,62 @@ describe('chat()', () => {
     expect(body.tool_choice).toBe('auto')
   })
 
+  it('passes OpenRouter-compatible web plugin options', async () => {
+    globalThis.fetch = mockFetchJson(COMPLETION)
+    const client = new TCloudClient({ apiKey: 'sk-tan-test' })
+    await client.chat({
+      messages: [{ role: 'user', content: 'latest news?' }],
+      plugins: [{
+        id: 'web',
+        engine: 'parallel',
+        max_results: 7,
+        search_prompt: 'Use these sources.',
+        include_domains: ['arxiv.org'],
+      }],
+    })
+    const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body)
+    expect(body.plugins).toEqual([{
+      id: 'web',
+      engine: 'parallel',
+      max_results: 7,
+      search_prompt: 'Use these sources.',
+      include_domains: ['arxiv.org'],
+    }])
+  })
+
+  it('maps top-level webSearch shorthand into gateway.webSearch', async () => {
+    globalThis.fetch = mockFetchJson(COMPLETION)
+    const client = new TCloudClient({ apiKey: 'sk-tan-test' })
+    await client.chat({
+      messages: [{ role: 'user', content: 'latest news?' }],
+      webSearch: {
+        provider: 'exa',
+        maxResults: 5,
+        searchRecency: 'week',
+      },
+    })
+    const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body)
+    expect(body.gateway).toEqual({
+      webSearch: {
+        provider: 'exa',
+        maxResults: 5,
+        searchRecency: 'week',
+      },
+    })
+  })
+
+  it('keeps explicit gateway.webSearch when shorthand is also set', async () => {
+    globalThis.fetch = mockFetchJson(COMPLETION)
+    const client = new TCloudClient({ apiKey: 'sk-tan-test' })
+    await client.chat({
+      messages: [{ role: 'user', content: 'latest news?' }],
+      webSearch: { provider: 'exa' },
+      gateway: { webSearch: { provider: 'parallel' } },
+    })
+    const body = JSON.parse((globalThis.fetch as any).mock.calls[0][1].body)
+    expect(body.gateway.webSearch).toEqual({ provider: 'parallel' })
+  })
+
   it('passes specific tool_choice', async () => {
     globalThis.fetch = mockFetchJson(COMPLETION)
     const client = new TCloudClient({ apiKey: 'sk-tan-test' })
@@ -174,6 +230,20 @@ describe('chat()', () => {
       messages: [{ role: 'user', content: 'hi' }],
       providerOptions: { model: 'override-attempt' },
     })).rejects.toThrow('providerOptions cannot override protected chat field "model"')
+    expect((globalThis.fetch as any).mock.calls).toHaveLength(0)
+  })
+
+  it('rejects providerOptions that try to override web search fields', async () => {
+    globalThis.fetch = mockFetchJson(COMPLETION)
+    const client = new TCloudClient({ apiKey: 'sk-tan-test' })
+    await expect(client.chat({
+      messages: [{ role: 'user', content: 'hi' }],
+      providerOptions: { plugins: [{ id: 'web' }] },
+    })).rejects.toThrow('providerOptions cannot override protected chat field "plugins"')
+    await expect(client.chat({
+      messages: [{ role: 'user', content: 'hi' }],
+      providerOptions: { webSearch: true },
+    })).rejects.toThrow('providerOptions cannot override protected chat field "webSearch"')
     expect((globalThis.fetch as any).mock.calls).toHaveLength(0)
   })
 

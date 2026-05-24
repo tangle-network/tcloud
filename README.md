@@ -59,6 +59,7 @@ await client.rerank({ query: 'AI', documents: ['doc1', 'doc2'] })
 
 // Web search
 await client.search({ query: 'latest Tangle docs', provider: 'exa', maxResults: 5 })
+await client.ask('What changed in Tangle this week?', { webSearch: { provider: 'exa', maxResults: 5 } })
 
 // Fine-tuning
 await client.fineTuneCreate({ model: 'gpt-4o-mini', training_file: 'file-abc123' })

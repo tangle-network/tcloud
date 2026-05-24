@@ -180,6 +180,26 @@ export interface SearchResponse {
   }
 }
 
+export interface WebSearchPlugin {
+  id: 'web'
+  engine?: 'native' | 'exa' | 'parallel' | 'firecrawl'
+  provider?: SearchProvider
+  maxResults?: number
+  max_results?: number
+  searchPrompt?: string
+  search_prompt?: string
+  includeDomains?: string[]
+  include_domains?: string[]
+  excludeDomains?: string[]
+  exclude_domains?: string[]
+  searchRecency?: SearchRecency
+  search_recency?: SearchRecency
+}
+
+export type ChatPlugin =
+  | WebSearchPlugin
+  | ({ id: string } & Record<string, unknown>)
+
 export interface CompletionOptions {
   model?: string
   prompt: string
@@ -466,6 +486,10 @@ export interface ChatOptions {
   tools?: any[]
   /** Tool choice strategy or specific tool */
   toolChoice?: 'none' | 'auto' | 'required' | { type: 'function'; function: { name: string } }
+  /** OpenRouter-compatible plugins, e.g. `[{ id: 'web', max_results: 5 }]`. */
+  plugins?: ChatPlugin[]
+  /** Shorthand for `gateway.webSearch`; explicit `gateway.webSearch` wins when both are set. */
+  webSearch?: GatewayOptions['webSearch']
   /**
    * Gateway options: routing, compliance, inference strategies (RSA/MoA/Best-of-N).
    * Sent as `body.gateway` to the Router.
