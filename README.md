@@ -57,6 +57,9 @@ await client.transcribe(audioBlob)
 // Rerank
 await client.rerank({ query: 'AI', documents: ['doc1', 'doc2'] })
 
+// Web search
+await client.search({ query: 'latest Tangle docs', provider: 'exa', maxResults: 5 })
+
 // Fine-tuning
 await client.fineTuneCreate({ model: 'gpt-4o-mini', training_file: 'file-abc123' })
 await client.fineTuneList()
@@ -114,6 +117,7 @@ Rotation strategies: `round-robin`, `random`, `min-exposure` (per-call dispatch,
 npx tcloud chat "Hello"              # chat
 npx tcloud chat --private "Anon"     # anonymous inference
 npx tcloud models                    # list models
+npx tcloud search "Tangle docs" --provider exa --max-results 5
 npx tcloud operators                 # list operators
 npx tcloud wallet generate           # create shielded wallet
 npx tcloud credits balance           # check credits

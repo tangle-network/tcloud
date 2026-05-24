@@ -24,6 +24,7 @@ describe('tcloud CLI version', () => {
 
   it.each([
     ['image-generate', ['--prompt <prompt>', '--response-format <format>']],
+    ['search', ['--provider <provider>', '--max-results <n>', '--include-domain <domain...>']],
     ['video-generate', ['--provider <provider>', '--aspect-ratio <ratio>', '--callback-url <url>']],
     ['speech', ['--input <text>', '--output <file>']],
     ['transcribe', ['--language <language>', '--prompt <prompt>']],

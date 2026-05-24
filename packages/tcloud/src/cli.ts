@@ -396,6 +396,47 @@ program.command('models')
     } catch (e: any) { console.error('Error:', e.message) }
   })
 
+// ── search ──
+
+program.command('search')
+  .description('Search the web')
+  .argument('<query>', 'Search query')
+  .option('--provider <provider>', 'Search provider: perplexity, exa, you, parallel, tavily, brave')
+  .option('-n, --max-results <n>', 'Maximum results')
+  .option('--recency <period>', 'day, week, month, or year')
+  .option('--include-domain <domain...>', 'Restrict to domains')
+  .option('--exclude-domain <domain...>', 'Exclude domains')
+  .option('--json', 'Print raw JSON response')
+  .action(async (query, opts) => {
+    const client = getClient() as TCloud
+    try {
+      const resp = await client.search({
+        query,
+        provider: opts.provider,
+        maxResults: optionalNumber(opts.maxResults),
+        searchRecency: opts.recency,
+        includeDomains: opts.includeDomain,
+        excludeDomains: opts.excludeDomain,
+      })
+      if (opts.json) {
+        printJson(resp)
+        return
+      }
+      console.log(`${resp.provider} results for "${resp.query}":`)
+      resp.data.forEach((hit, index) => {
+        console.log(`${index + 1}. ${hit.title}`)
+        console.log(`   ${hit.url}`)
+        if (hit.snippet) console.log(`   ${hit.snippet}`)
+      })
+      if (resp.usage?.billed_cost != null) {
+        console.log(`  \u21B3 $${resp.usage.billed_cost.toFixed(6)} billed`)
+      }
+    } catch (e: any) {
+      console.error('Error:', e.message)
+      process.exit(1)
+    }
+  })
+
 // ── media generation ──
 
 program.command('image-generate')

@@ -25,6 +25,8 @@ import type {
   ImageResponse,
   RerankOptions,
   RerankResponse,
+  SearchOptions,
+  SearchResponse,
   CompletionOptions,
   CompletionResponse,
   TranscriptionResponse,
@@ -984,6 +986,22 @@ export class TCloudClient {
         query: options.query,
         documents: options.documents,
         top_n: options.top_n,
+      }),
+    })
+  }
+
+  /** Search the web through Tangle Router billing and provider routing. */
+  async search(options: SearchOptions): Promise<SearchResponse> {
+    return this._request(`${this.baseURL}/search`, {
+      method: 'POST',
+      body: JSON.stringify({
+        query: options.query,
+        provider: options.provider,
+        model: options.model,
+        maxResults: options.maxResults,
+        searchRecency: options.searchRecency,
+        includeDomains: options.includeDomains,
+        excludeDomains: options.excludeDomains,
       }),
     })
   }
