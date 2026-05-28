@@ -465,6 +465,12 @@ See the [`examples/`](./examples/) directory — each is a self-contained script
 | 08 | [OpenAI SDK](./examples/08-openai-compat.ts) | Drop-in replacement via baseURL |
 | 09 | [Vercel AI SDK](./examples/09-vercel-ai-sdk.ts) | generateText + streamText with Tangle |
 | 10 | [Spending Limits](./examples/10-spending-limits.ts) | Budget caps, request limits, warning callbacks |
+| 11 | [Inference Strategies](./examples/11-inference-strategies.ts) | Min-exposure + operator rotation patterns |
+| 12 | [Bridge Sessions](./examples/12-bridge-sessions.ts) | Persistent bridge sessions for harness routing |
+| 13 | [Bridge Chat App](./examples/13-bridge-chat-app.ts) | Multi-turn bridge application |
+| 14 | [Direct cli-bridge](./examples/14-direct-cli-bridge.ts) | Local cli-bridge, no router |
+| 15 | [Sandbox Agents](./examples/15-sandbox-agents.ts) | Sandbox agents + inline AgentProfile |
+| 16 | [Tangle Intelligence Hook](./examples/16-tangle-intelligence-hook.ts) | Trace inference into hosted intelligence (one OTLP block) |
 
 Run any example:
 ```bash
