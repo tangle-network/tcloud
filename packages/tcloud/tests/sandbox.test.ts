@@ -48,6 +48,28 @@ describe('tcloud sandbox facade', () => {
     })
   })
 
+  it('forwards a GPU accelerator request into resources.accelerator', () => {
+    const options = buildSandboxCreateOptions({
+      accelerator: { kind: 'nvidia-a100', count: 1, memoryMB: 40960 },
+    })
+    expect(options.resources).toEqual({
+      cpuCores: undefined,
+      memoryMB: undefined,
+      diskGB: undefined,
+      accelerator: { kind: 'nvidia-a100', count: 1, memoryMB: 40960 },
+    })
+  })
+
+  it('emits a resources block when ONLY an accelerator is requested', () => {
+    const options = buildSandboxCreateOptions({ accelerator: { kind: 'nvidia-h100' } })
+    expect(options.resources).toBeDefined()
+    expect(options.resources.accelerator).toEqual({ kind: 'nvidia-h100' })
+  })
+
+  it('omits resources when neither cpu/mem/disk nor accelerator is set', () => {
+    expect(buildSandboxCreateOptions({ name: 'cpu-only' }).resources).toBeUndefined()
+  })
+
   it('rejects TEE-only options without a tee request', () => {
     expect(() => buildSandboxCreateOptions({
       name: 'bad',

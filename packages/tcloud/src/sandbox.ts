@@ -1,4 +1,18 @@
 import { Sandbox, type AgentProfile } from '@tangle-network/sandbox'
+
+/**
+ * GPU / accelerator request, mirroring `@tangle-network/sandbox`'s
+ * `SandboxResources.accelerator` shape (that type is not re-exported from the
+ * SDK's public entry, so we declare the structural shape here and forward it
+ * verbatim). `kind` is the accelerator class (e.g. 'nvidia-a100'); `count`
+ * defaults to 1; `memoryMB` is a minimum device-memory floor when the exact
+ * class is flexible.
+ */
+export interface SandboxAccelerator {
+  kind: string
+  count?: number
+  memoryMB?: number
+}
 import { createHash, randomBytes } from 'node:crypto'
 import {
   type AsyncAttestationPolicy,
@@ -26,6 +40,14 @@ export interface TCloudSandboxCreateOptions {
   cpu?: number
   memoryMb?: number
   diskGb?: number
+  /**
+   * GPU / accelerator request for heavy compute workloads (CFD, FEA, PDE,
+   * MD, training). Forwarded verbatim to the underlying `@tangle-network/
+   * sandbox` `CreateSandboxOptions.resources.accelerator`, which the fleet
+   * autoscaler uses to provision a GPU-class host. `{ kind, count?, memoryMB? }`
+   * — e.g. `{ kind: 'nvidia-a100', count: 1 }`. Omit for CPU-only sandboxes.
+   */
+  accelerator?: SandboxAccelerator
   gitUrl?: string
   gitRef?: string
   backend?: 'opencode' | 'claude-code' | 'codex' | 'amp' | (string & {})
@@ -422,11 +444,12 @@ export function buildSandboxCreateOptions(options: TCloudSandboxCreateOptions): 
         }
       : undefined,
     resources:
-      options.cpu || options.memoryMb || options.diskGb
+      options.cpu || options.memoryMb || options.diskGb || options.accelerator
         ? {
             cpuCores: options.cpu,
             memoryMB: options.memoryMb,
             diskGB: options.diskGb,
+            accelerator: options.accelerator,
           }
         : undefined,
     // backend: merge `backend` (type string) with `agentProfile` (carried
