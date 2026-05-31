@@ -102,7 +102,7 @@ const client = new TCloud({
 import { TCloud } from '@tangle-network/tcloud'
 
 const client = TCloud.rotating({
-  apiKey: process.env.TCLOUD_API_KEY,
+  apiKey: process.env.TANGLE_API_KEY,
   routing: { strategy: 'min-exposure' },
 })
 await client.ask('Hello privately')

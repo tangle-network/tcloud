@@ -409,8 +409,8 @@ tcloud config --model gpt-4o-mini
 Environment variables:
 - `TANGLE_API_KEY` — API key (primary). One key for router + sandbox + all Tangle products.
 - `TCLOUD_API_KEY` — Deprecated alias, still honored for backwards compatibility.
-- `OPENAI_API_KEY` — Fallback API key (works because the API is OpenAI-compatible).
-- `TCLOUD_BASE_URL` — Override API base URL.
+- `TANGLE_ROUTER_URL` — Override CLI router URL.
+- `TCLOUD_API_URL` — Deprecated CLI router URL alias.
 
 ## OpenAI SDK Compatibility
 

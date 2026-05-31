@@ -7,7 +7,7 @@
  * a PR number), and .stream() your way through turns.
  *
  * Run:
- *   TCLOUD_API_KEY=sk-tan-... \
+ *   TANGLE_API_KEY=sk-tan-... \
  *   BRIDGE_UNLOCK=... \
  *   HARNESS=kimi-code MODEL=kimi-for-coding \
  *   npx tsx examples/13-bridge-chat-app.ts
@@ -22,7 +22,7 @@ const MODEL = process.env.MODEL // optional; falls back to harness default
 const RESUME = process.env.RESUME ?? `chat-${Date.now()}`
 
 const tcloud = new TCloudClient({
-  apiKey: process.env.TCLOUD_API_KEY!,
+  apiKey: process.env.TANGLE_API_KEY!,
   baseURL: 'https://router.tangle.tools/api',
 })
 

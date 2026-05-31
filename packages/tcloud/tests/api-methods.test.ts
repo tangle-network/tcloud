@@ -39,7 +39,7 @@ describe('models()', () => {
 
   it('throws on error', async () => {
     globalThis.fetch = mockFetch({}, 500)
-    const client = new TCloudClient({ apiKey: 'sk-tan-test' })
+    const client = new TCloudClient({ apiKey: 'sk-tan-test', retry: false })
     await expect(client.models()).rejects.toThrow(TCloudError)
   })
 })

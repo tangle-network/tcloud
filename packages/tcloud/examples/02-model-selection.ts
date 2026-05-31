@@ -1,13 +1,13 @@
 /**
  * Model selection — three ways to pick a model.
  *
- * Run: TCLOUD_API_KEY=sk-tan-... npx tsx examples/02-model-selection.ts
+ * Run: TANGLE_API_KEY=sk-tan-... npx tsx examples/02-model-selection.ts
  */
 import { TCloud } from 'tcloud'
 
 // 1. Set at client creation (recommended — explicit, one place to change)
 const client = new TCloud({
-  apiKey: process.env.TCLOUD_API_KEY,
+  apiKey: process.env.TANGLE_API_KEY,
   model: 'meta-llama/llama-4-maverick',
 })
 

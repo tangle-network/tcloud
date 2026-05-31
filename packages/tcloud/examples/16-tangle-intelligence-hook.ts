@@ -10,11 +10,11 @@
  * Read insights back from the dashboard or `GET /v1/insights/outputs`
  * with the same key. Tenant resolves from the key, never the payload.
  *
- * Run: TCLOUD_API_KEY=sk-tan-... npx tsx examples/16-tangle-intelligence-hook.ts
+ * Run: TANGLE_API_KEY=sk-tan-... npx tsx examples/16-tangle-intelligence-hook.ts
  */
 import { TCloud } from 'tcloud'
 
-const API_KEY = process.env.TCLOUD_API_KEY ?? 'sk-tan-...'
+const API_KEY = process.env.TANGLE_API_KEY ?? process.env.TCLOUD_API_KEY ?? 'sk-tan-...'
 const INTELLIGENCE_OTLP_URL =
   process.env.INTELLIGENCE_OTLP_URL ??
   'https://intelligence.tangle.tools/v1/otlp/v1/traces'

@@ -43,8 +43,8 @@ function loadConfig(): CLIConfig {
     ...fileConfig,
     ...(process.env.TANGLE_ROUTER_URL ? { apiUrl: process.env.TANGLE_ROUTER_URL.replace(/\/v1\/?$/, '') } : {}),
     ...(process.env.TCLOUD_API_URL ? { apiUrl: process.env.TCLOUD_API_URL.replace(/\/v1\/?$/, '') } : {}),
-    ...(process.env.TANGLE_API_KEY ? { apiKey: process.env.TANGLE_API_KEY } : {}),
     ...(process.env.TCLOUD_API_KEY ? { apiKey: process.env.TCLOUD_API_KEY } : {}),
+    ...(process.env.TANGLE_API_KEY ? { apiKey: process.env.TANGLE_API_KEY } : {}),
   }
 }
 

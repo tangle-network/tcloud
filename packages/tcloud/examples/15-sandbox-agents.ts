@@ -16,7 +16,7 @@
  * and orchestration just composes profile ids.
  *
  * Run:
- *   TCLOUD_API_KEY=sk-tan-...
+ *   TANGLE_API_KEY=sk-tan-...
  *   BRIDGE_UNLOCK=...                  # router gate
  *   npx tsx examples/15-sandbox-agents.ts
  *
@@ -32,7 +32,7 @@ const direct = process.argv.includes('--direct')
 
 // ── Path A: router-mediated (default) ─────────────────────────────
 const router = new TCloudClient({
-  apiKey: process.env.TCLOUD_API_KEY!,
+  apiKey: process.env.TANGLE_API_KEY!,
   baseURL: 'https://router.tangle.tools/api',
 })
 

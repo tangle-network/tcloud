@@ -7,13 +7,13 @@
  * 2. Router correctly rejects requests to non-existent services/blueprints
  * 3. Router returns structured errors for invalid routing
  *
- * Requires: TCLOUD_API_KEY=sk-tan-xxx
- * Run: TCLOUD_API_KEY=sk-tan-xxx npx vitest run tests/operator-routing.test.ts
+ * Requires: TANGLE_API_KEY=sk-tan-xxx
+ * Run: TANGLE_API_KEY=sk-tan-xxx npx vitest run tests/operator-routing.test.ts
  */
 import { describe, it, expect, beforeAll } from 'vitest'
 import { TCloud } from '../src/index'
 
-const API_KEY = process.env.TCLOUD_API_KEY
+const API_KEY = process.env.TANGLE_API_KEY ?? process.env.TCLOUD_API_KEY
 const describeIf = (condition: boolean) => condition ? describe : describe.skip
 
 describeIf(!!API_KEY)('operator routing via tcloud SDK', () => {

@@ -1,12 +1,12 @@
 /**
  * Cost estimation and usage tracking.
  *
- * Run: TCLOUD_API_KEY=sk-tan-... npx tsx examples/06-cost-and-usage.ts
+ * Run: TANGLE_API_KEY=sk-tan-... npx tsx examples/06-cost-and-usage.ts
  */
 import { TCloud } from 'tcloud'
 
 const client = new TCloud({
-  apiKey: process.env.TCLOUD_API_KEY,
+  apiKey: process.env.TANGLE_API_KEY,
   model: 'gpt-4o',
 })
 

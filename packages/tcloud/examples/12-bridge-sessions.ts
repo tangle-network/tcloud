@@ -7,7 +7,7 @@
  * so prior turns don't get re-tokenized on every round trip.
  *
  * Run:
- *   TCLOUD_API_KEY=sk-tan-... \
+ *   TANGLE_API_KEY=sk-tan-... \
  *   BRIDGE_UNLOCK=... \
  *   npx tsx examples/12-bridge-sessions.ts
  */
@@ -15,7 +15,7 @@
 import { TCloudClient } from '@tangle-network/tcloud'
 
 const tcloud = new TCloudClient({
-  apiKey: process.env.TCLOUD_API_KEY!,
+  apiKey: process.env.TANGLE_API_KEY!,
   baseURL: 'https://router.tangle.tools/api',
 })
 

@@ -1,13 +1,13 @@
 /**
  * Integration tests against the live router.tangle.tools.
- * Requires TCLOUD_API_KEY env var set.
- * Run with: TCLOUD_API_KEY=sk-tan-xxx vitest run tests/integration.test.ts
+ * Requires TANGLE_API_KEY env var set.
+ * Run with: TANGLE_API_KEY=sk-tan-xxx vitest run tests/integration.test.ts
  */
 import { describe, it, expect, beforeAll } from 'vitest'
 import { TCloud } from '../src/index'
 import type { ChatCompletion, Model } from '../src/types'
 
-const API_KEY = process.env.TCLOUD_API_KEY
+const API_KEY = process.env.TANGLE_API_KEY ?? process.env.TCLOUD_API_KEY
 
 const describeIf = (condition: boolean) => condition ? describe : describe.skip
 

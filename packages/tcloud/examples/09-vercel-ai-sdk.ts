@@ -3,13 +3,13 @@
  *
  * The OpenAI provider works because Tangle exposes an OpenAI-compatible API.
  *
- * Run: npm install ai @ai-sdk/openai && TCLOUD_API_KEY=sk-tan-... npx tsx examples/09-vercel-ai-sdk.ts
+ * Run: npm install ai @ai-sdk/openai && TANGLE_API_KEY=sk-tan-... npx tsx examples/09-vercel-ai-sdk.ts
  */
 import { createOpenAI } from '@ai-sdk/openai'
 import { generateText, streamText } from 'ai'
 
 const tangle = createOpenAI({
-  apiKey: process.env.TCLOUD_API_KEY,
+  apiKey: process.env.TANGLE_API_KEY ?? process.env.TCLOUD_API_KEY,
   baseURL: 'https://router.tangle.tools/v1',
 })
 

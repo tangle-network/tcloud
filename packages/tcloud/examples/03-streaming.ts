@@ -1,12 +1,12 @@
 /**
  * Streaming — real-time token output via SSE.
  *
- * Run: TCLOUD_API_KEY=sk-tan-... npx tsx examples/03-streaming.ts
+ * Run: TANGLE_API_KEY=sk-tan-... npx tsx examples/03-streaming.ts
  */
 import { TCloud } from 'tcloud'
 
 const client = new TCloud({
-  apiKey: process.env.TCLOUD_API_KEY,
+  apiKey: process.env.TANGLE_API_KEY,
   model: 'gpt-4o-mini',
 })
 

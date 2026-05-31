@@ -4,12 +4,12 @@
  * Set per-request cost caps, total budget limits, and request count limits.
  * The client blocks requests that would exceed limits BEFORE sending them.
  *
- * Run: TCLOUD_API_KEY=sk-tan-... npx tsx examples/10-spending-limits.ts
+ * Run: TANGLE_API_KEY=sk-tan-... npx tsx examples/10-spending-limits.ts
  */
 import { TCloud } from 'tcloud'
 
 const client = new TCloud({
-  apiKey: process.env.TCLOUD_API_KEY,
+  apiKey: process.env.TANGLE_API_KEY,
   model: 'gpt-4o-mini',
   limits: {
     // Hard caps — requests blocked when exceeded

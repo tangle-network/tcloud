@@ -4,15 +4,15 @@
  * Every test hits router.tangle.tools with real provider inference.
  * No mocks. No fake servers. No hand-crafted responses.
  *
- * Requires: TCLOUD_API_KEY=sk-tan-xxx
- * Run:      TCLOUD_API_KEY=sk-tan-xxx npx vitest run tests/all-blueprints-e2e.test.ts
+ * Requires: TANGLE_API_KEY=sk-tan-xxx
+ * Run:      TANGLE_API_KEY=sk-tan-xxx npx vitest run tests/all-blueprints-e2e.test.ts
  *
  * Cost: ~$0.01 per full run (cheap models, small payloads).
  */
 import { describe, it, expect, beforeAll } from 'vitest'
 import { TCloud } from '../src/index'
 
-const API_KEY = process.env.TCLOUD_API_KEY
+const API_KEY = process.env.TANGLE_API_KEY ?? process.env.TCLOUD_API_KEY
 const describeIf = (condition: boolean) => condition ? describe : describe.skip
 
 describeIf(!!API_KEY)('E2E: all blueprint types via router.tangle.tools', () => {

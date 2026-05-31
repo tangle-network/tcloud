@@ -4,12 +4,12 @@
  * The API is OpenAI-compatible, so any tool that works with OpenAI
  * works with Tangle by changing the base URL.
  *
- * Run: npm install openai && TCLOUD_API_KEY=sk-tan-... npx tsx examples/08-openai-compat.ts
+ * Run: npm install openai && TANGLE_API_KEY=sk-tan-... npx tsx examples/08-openai-compat.ts
  */
 import OpenAI from 'openai'
 
 const client = new OpenAI({
-  apiKey: process.env.TCLOUD_API_KEY,
+  apiKey: process.env.TANGLE_API_KEY ?? process.env.TCLOUD_API_KEY,
   baseURL: 'https://router.tangle.tools/v1',
 })
 

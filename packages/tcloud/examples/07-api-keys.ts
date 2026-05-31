@@ -1,11 +1,11 @@
 /**
  * API key management — create, list, revoke keys programmatically.
  *
- * Run: TCLOUD_API_KEY=sk-tan-... npx tsx examples/07-api-keys.ts
+ * Run: TANGLE_API_KEY=sk-tan-... npx tsx examples/07-api-keys.ts
  */
 import { TCloud } from 'tcloud'
 
-const client = new TCloud({ apiKey: process.env.TCLOUD_API_KEY })
+const client = new TCloud({ apiKey: process.env.TANGLE_API_KEY })
 
 // Create a new key
 const { key, id } = await client.createKey('my-app-production')
