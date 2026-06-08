@@ -6,6 +6,7 @@ import {
   agent,
   localCliBridgeTransport,
   routerBridgeTransport,
+  routerChatTransport,
   sandboxSdkTransport,
   type AgentEvent,
   type AgentRunCriterion,
@@ -85,6 +86,36 @@ function makeFakeClient(responses: ResponseSpec[]) {
     },
   }
   return { client, calls }
+}
+
+function makeFakeChatClient(responses: ResponseSpec[]) {
+  const chats: Array<Record<string, unknown>> = []
+  let idx = 0
+  function next(): ResponseSpec {
+    const r = responses[Math.min(idx, responses.length - 1)]
+    idx++
+    return r
+  }
+  return {
+    chats,
+    client: {
+      async chat(opts: Record<string, unknown>) {
+        chats.push({ ...opts, __mode: 'chat' })
+        const r = next()
+        if (r instanceof Error) throw r
+        return typeof r === 'function' ? r() : r
+      },
+      async *chatStream(opts: Record<string, unknown>) {
+        chats.push({ ...opts, __mode: 'chatStream' })
+        const r = next()
+        if (r instanceof Error) throw r
+        const completion = typeof r === 'function' ? r() : r
+        for (const chunk of chunksFor(completion)) {
+          yield chunk
+        }
+      },
+    },
+  }
 }
 
 async function collect(iter: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
@@ -257,6 +288,71 @@ describe('Agent.run', () => {
       brief: 'hi',
     }).run()
     expect(result.verdict).toBe('verified')
+  })
+
+  it('runs inline profiles directly against the router chat surface without sandbox fields', async () => {
+    const { client, chats } = makeFakeChatClient([makeCompletion('analysis complete')])
+    const profile = {
+      name: 'trace-analyst',
+      prompt: {
+        systemPrompt: 'You analyze traces.',
+        instructions: ['Return concise findings.'],
+      },
+      model: { default: 'openai/gpt-4o-mini' },
+    } as AgentProfile
+
+    const result = await agent({
+      transport: routerChatTransport(client as any, { temperature: 0 }),
+      profile,
+      brief: 'inspect trace 1',
+    }).run()
+
+    expect(result.verdict).toBe('verified')
+    expect(chats[0].__mode).toBe('chatStream')
+    expect(chats[0].model).toBe('openai/gpt-4o-mini')
+    expect(chats[0].temperature).toBe(0)
+    expect(chats[0].sandbox).toBeUndefined()
+    expect(chats[0].messages).toEqual([
+      { role: 'system', content: 'You analyze traces.\nReturn concise findings.' },
+      { role: 'user', content: 'inspect trace 1' },
+    ])
+  })
+
+  it('keeps router chat history across agent-loop iterations', async () => {
+    const { client, chats } = makeFakeChatClient([
+      makeCompletion('not done'),
+      makeCompletion('DONE'),
+    ])
+    const result = await agent({
+      transport: routerChatTransport(client as any),
+      profile: 'openai/gpt-4o-mini',
+      brief: 'finish the task',
+      criteria: [{ name: 'done', check: (ctx) => ({ ok: ctx.lastMessage.includes('DONE'), reason: 'missing DONE' }) }],
+    }).run()
+
+    expect(result.verdict).toBe('verified')
+    expect(chats).toHaveLength(2)
+    expect(chats[1].messages).toEqual([
+      { role: 'user', content: 'finish the task' },
+      { role: 'assistant', content: 'not done' },
+      { role: 'user', content: expect.stringContaining("criterion 'done' failed") },
+    ])
+  })
+
+  it('fails closed when a direct router profile asks for sandbox-only capabilities', async () => {
+    const { client } = makeFakeChatClient([makeCompletion('unused')])
+    const result = await agent({
+      transport: routerChatTransport(client as any),
+      profile: {
+        name: 'coder',
+        prompt: { systemPrompt: 'Edit files.' },
+        tools: { Bash: true },
+      } as AgentProfile,
+      brief: 'ship it',
+    }).run()
+
+    expect(result.verdict).toBe('error')
+    expect(result.error).toContain('sandbox-only profile fields: tools')
   })
 
   it('local cli-bridge transport uses direct sandbox model shape and session id', async () => {

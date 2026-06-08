@@ -49,7 +49,7 @@
  */
 
 import type { AgentProfile, PromptOptions, PromptResult, SandboxEvent, SandboxInstance } from '@tangle-network/sandbox'
-import { TCloudClient, type ChatCompletion, type ChatCompletionChunk, type ChatMessage } from '@tangle-network/tcloud'
+import { TCloudClient, type ChatCompletion, type ChatCompletionChunk, type ChatMessage, type ChatOptions } from '@tangle-network/tcloud'
 
 // ── Part types (wrappers over the sandbox SDK session-gateway shape) ─────────
 //
@@ -254,6 +254,22 @@ export interface SandboxSdkTransportOptions {
   timeoutMs?: number
 }
 
+export type RouterChatClient = Pick<TCloudClient, 'chat' | 'chatStream'>
+
+export interface RouterChatTransportOptions extends Omit<ChatOptions, 'messages' | 'model' | 'stream' | 'sandbox' | 'bridge'> {
+  /**
+   * Default model for inline profiles that do not set `profile.model.default`.
+   * A string profile is treated as the model id.
+   */
+  model?: string
+  /**
+   * Direct router agents cannot honor sandbox-only fields. Leave this false
+   * for evals/analysts/judges; set true only when intentionally discarding
+   * sandbox capabilities.
+   */
+  allowSandboxProfileFields?: boolean
+}
+
 class BridgeAgentSessionTransport implements AgentSessionTransport {
   constructor(
     private readonly client: BridgeClient,
@@ -319,8 +335,80 @@ class SandboxSdkAgentSessionTransport implements AgentSessionTransport {
   }
 }
 
+class RouterChatAgentSessionTransport implements AgentSessionTransport {
+  constructor(
+    private readonly client: RouterChatClient,
+    private readonly defaults: RouterChatTransportOptions = {},
+  ) {}
+
+  start(input: AgentSessionStart): AgentSession {
+    const profile = routerChatProfile(input.profile, this.defaults)
+    return new RouterChatAgentSession(this.client, profile, this.defaults, input.resume)
+  }
+}
+
+class RouterChatAgentSession implements AgentSession {
+  private readonly history: ChatMessage[]
+  readonly id?: string
+
+  constructor(
+    private readonly client: RouterChatClient,
+    private readonly profile: RouterChatProfile,
+    private readonly defaults: RouterChatTransportOptions,
+    id?: string,
+  ) {
+    this.id = id
+    this.history = profile.systemPrompt ? [{ role: 'system', content: profile.systemPrompt }] : []
+  }
+
+  async chat(options: AgentSessionChatOptions): Promise<ChatCompletion> {
+    const messages = this.prepareMessages(options)
+    const completion = await this.client.chat(this.chatOptions(messages))
+    this.appendAssistant(completion.choices?.[0]?.message?.content ?? '')
+    return completion
+  }
+
+  async *chatStream(options: AgentSessionChatOptions): AsyncIterable<ChatCompletionChunk> {
+    const messages = this.prepareMessages(options)
+    let assistant = ''
+    try {
+      for await (const chunk of this.client.chatStream(this.chatOptions(messages))) {
+        assistant += extractDelta(chunk)
+        yield chunk
+      }
+    } finally {
+      if (assistant) this.appendAssistant(assistant)
+    }
+  }
+
+  private prepareMessages(options: AgentSessionChatOptions): ChatMessage[] {
+    if (options.sandbox?.agentProfile || options.sandbox?.sessionId) {
+      throw new Error('routerChatTransport does not support sandbox agentProfile/sessionId; use routerBridgeTransport or sandboxSdkTransport')
+    }
+    this.history.push(...options.messages)
+    return [...this.history]
+  }
+
+  private chatOptions(messages: ChatMessage[]): ChatOptions {
+    const { allowSandboxProfileFields: _allow, ...defaults } = this.defaults
+    return {
+      ...defaults,
+      ...(this.profile.model ? { model: this.profile.model } : {}),
+      messages,
+    }
+  }
+
+  private appendAssistant(content: string): void {
+    this.history.push({ role: 'assistant', content })
+  }
+}
+
 export function routerBridgeTransport(client: BridgeClient, defaults: BridgeTransportDefaults = {}): AgentSessionTransport {
   return new BridgeAgentSessionTransport(client, defaults, false)
+}
+
+export function routerChatTransport(client: RouterChatClient, defaults: RouterChatTransportOptions = {}): AgentSessionTransport {
+  return new RouterChatAgentSessionTransport(client, defaults)
 }
 
 export function localCliBridgeTransport(
@@ -395,15 +483,6 @@ export class Agent {
     if (!transport) {
       throw new Error('Agent requires either agent(client, options) or options.transport')
     }
-    const session = await transport.start({
-      profile: this.options.profile,
-      resume: this.options.resume,
-      unlock: this.options.unlock,
-      bridgeUrl: this.options.bridgeUrl,
-      bridgeBearer: this.options.bridgeBearer,
-      workspace: this.options.workspace,
-    })
-
     let nextUserTurn = this.options.brief
 
     let iteration = 0
@@ -423,6 +502,23 @@ export class Agent {
       ...(blockedBy != null ? { blockedBy } : {}),
       ...(extra.error != null ? { error: extra.error } : {}),
     })
+
+    let session: AgentSession
+    try {
+      session = await transport.start({
+        profile: this.options.profile,
+        resume: this.options.resume,
+        unlock: this.options.unlock,
+        bridgeUrl: this.options.bridgeUrl,
+        bridgeBearer: this.options.bridgeBearer,
+        workspace: this.options.workspace,
+      })
+    } catch (err) {
+      yield buildVerdict('error', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return
+    }
 
     while (iteration < maxIter) {
       iteration++
@@ -567,6 +663,43 @@ function extractUsd(completion: { usage?: unknown }): number | null {
 
 function isLocalCliBridgeConfig(value: BridgeClient | LocalCliBridgeTransportConfig): value is LocalCliBridgeTransportConfig {
   return typeof (value as LocalCliBridgeTransportConfig).url === 'string'
+}
+
+interface RouterChatProfile {
+  model?: string
+  systemPrompt?: string
+}
+
+function routerChatProfile(profile: AgentProfile | string, options: RouterChatTransportOptions): RouterChatProfile {
+  if (typeof profile === 'string') return { model: profile }
+  const unsupported = unsupportedRouterProfileFields(profile)
+  if (!options.allowSandboxProfileFields && unsupported.length > 0) {
+    throw new Error(`routerChatTransport cannot honor sandbox-only profile fields: ${unsupported.join(', ')}`)
+  }
+  return {
+    ...(profile.model?.default ?? options.model ? { model: profile.model?.default ?? options.model } : {}),
+    ...(profileSystemPrompt(profile) ? { systemPrompt: profileSystemPrompt(profile) } : {}),
+  }
+}
+
+function profileSystemPrompt(profile: AgentProfile): string | undefined {
+  const lines = [
+    profile.prompt?.systemPrompt,
+    ...(profile.prompt?.instructions ?? []),
+  ].filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
+  return lines.length > 0 ? lines.join('\n') : undefined
+}
+
+function unsupportedRouterProfileFields(profile: AgentProfile): string[] {
+  const keys = ['permissions', 'tools', 'mcp', 'subagents', 'resources', 'hooks', 'modes', 'confidential'] as const
+  return keys.filter((key) => hasProfileValue(profile[key]))
+}
+
+function hasProfileValue(value: unknown): boolean {
+  if (value == null) return false
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'object') return Object.keys(value).length > 0
+  return true
 }
 
 function withSandbox(
