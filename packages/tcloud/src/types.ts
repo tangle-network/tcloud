@@ -461,6 +461,41 @@ export interface SandboxChatOptions {
   sessionId?: string
 }
 
+/** Pin a specific Surplus credit instead of the router's default selection (soonest-expiry-first). */
+export interface SurplusCreditPreference {
+  creditId?: string
+}
+
+/**
+ * Pricing controls for a chat call — market vs limit price, plus Surplus
+ * prepaid credits as the source of funds.
+ *
+ * Units match the Surplus market: prices are integer micro-tsUSD per 1M
+ * tokens (`15_000_000` = $15.00/M); a credit is a price-locked metered quota
+ * of `model:tokenKind` tokens debited per call at its strike.
+ * Serialized as `body.pricing` (snake_case) on `/v1/chat/completions`.
+ */
+export interface PricingOptions {
+  /**
+   * 'market' (default): pay the router's current price.
+   * 'limit': serve only if the effective price per 1M tokens is at or below
+   * the caps below; otherwise the router rejects with 402
+   * `limit_price_exceeded` before serving. A Surplus credit satisfies the cap
+   * at its locked strike regardless of the current market price.
+   */
+  mode?: 'market' | 'limit'
+  /** Limit cap for input tokens, micro-tsUSD per 1M. At least one cap is required in 'limit' mode. */
+  maxInputMicroPerM?: number
+  /** Limit cap for output tokens, micro-tsUSD per 1M. */
+  maxOutputMicroPerM?: number
+  /**
+   * Spend Surplus prepaid credits before the USD balance: `true`/`false` to
+   * opt in/out explicitly, or a preference object to pin a credit. When
+   * omitted the router decides (spends a credit whenever one covers the call).
+   */
+  credits?: boolean | SurplusCreditPreference
+}
+
 export interface ChatOptions {
   /** Model to use */
   model?: string
@@ -512,6 +547,27 @@ export interface ChatOptions {
    * `bridge/<harness>/<model>` and bridge headers are injected.
    */
   bridge?: BridgeOptions
+  /**
+   * Market vs limit price + Surplus credit spending. See {@link PricingOptions}.
+   */
+  pricing?: PricingOptions
+}
+
+/**
+ * One Surplus credit debit the router performed for a call (one per token
+ * kind). Wire shape — snake_case like the rest of the completion. Tokens
+ * debited were prepaid at the credit's strike; `overflow_tokens` exceeded the
+ * credit's remaining quota and are billed at the market price instead.
+ */
+export interface SurplusRedemption {
+  credit_id: string
+  token_kind: 'input' | 'output'
+  tokens_debited: number
+  overflow_tokens: number
+  /** The credit's locked price, micro-tsUSD per 1M tokens. */
+  strike_micro_per_m: number
+  /** Paid to the operator from the credit's escrowed backing, micro-tsUSD. */
+  payout_micro: number
 }
 
 export interface ChatCompletion {
@@ -528,6 +584,10 @@ export interface ChatCompletion {
     prompt_tokens: number
     completion_tokens: number
     total_tokens: number
+  }
+  /** Present when Surplus credits funded any part of this call. */
+  surplus?: {
+    redemptions: SurplusRedemption[]
   }
 }
 

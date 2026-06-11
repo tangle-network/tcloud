@@ -355,6 +355,46 @@ describe('Agent.run', () => {
     expect(result.error).toContain('sandbox-only profile fields: tools')
   })
 
+  it('spends a Surplus credit: pricing reaches the router and redemptions land in the result', async () => {
+    const redemption = {
+      credit_id: 'cr_1',
+      token_kind: 'output' as const,
+      tokens_debited: 20,
+      overflow_tokens: 0,
+      strike_micro_per_m: 14_900_000,
+      payout_micro: 298,
+    }
+    const { client, chats } = makeFakeChatClient([
+      makeCompletion('DONE', { surplus: { redemptions: [redemption] } }),
+    ])
+    const result = await agent({
+      transport: routerChatTransport(client as any, {
+        pricing: { mode: 'limit', maxOutputMicroPerM: 15_000_000, credits: true },
+      }),
+      profile: 'anthropic/claude-opus-4-8',
+      brief: 'say DONE',
+      stream: false,
+      criteria: [{ name: 'done', check: (ctx) => ({ ok: ctx.lastMessage.includes('DONE'), reason: 'missing DONE' }) }],
+    }).run()
+
+    expect(result.verdict).toBe('verified')
+    expect(chats[0].__mode).toBe('chat')
+    expect(chats[0].pricing).toEqual({ mode: 'limit', maxOutputMicroPerM: 15_000_000, credits: true })
+    expect(result.surplus).toEqual([redemption])
+  })
+
+  it('reports surplus as null when no credit funded the run', async () => {
+    const { client } = makeFakeChatClient([makeCompletion('DONE')])
+    const result = await agent({
+      transport: routerChatTransport(client as any),
+      profile: 'anthropic/claude-opus-4-8',
+      brief: 'say DONE',
+      stream: false,
+    }).run()
+    expect(result.verdict).toBe('verified')
+    expect(result.surplus).toBeNull()
+  })
+
   it('local cli-bridge transport uses direct sandbox model shape and session id', async () => {
     const { client, calls } = makeFakeClient([makeCompletion('ok')])
     const result = await agent({

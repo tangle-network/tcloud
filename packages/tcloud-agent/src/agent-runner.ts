@@ -49,7 +49,7 @@
  */
 
 import type { AgentProfile, PromptOptions, PromptResult, SandboxEvent, SandboxInstance } from '@tangle-network/sandbox'
-import { TCloudClient, type ChatCompletion, type ChatCompletionChunk, type ChatMessage, type ChatOptions } from '@tangle-network/tcloud'
+import { TCloudClient, type ChatCompletion, type ChatCompletionChunk, type ChatMessage, type ChatOptions, type SurplusRedemption } from '@tangle-network/tcloud'
 
 // ── Part types (wrappers over the sandbox SDK session-gateway shape) ─────────
 //
@@ -193,6 +193,15 @@ export interface AgentRunResult {
   wallMs: number
   /** Approximate spend in USD; `null` when no usage was reported. */
   usd: number | null
+  /**
+   * Surplus credit redemptions reported by the router across the run —
+   * prepaid quota debited at each credit's strike instead of billing the USD
+   * balance. `null` when no credit funded any call (or on streaming runs,
+   * where the router does not surface redemption blocks). Spend credits by
+   * setting `pricing` on the transport, e.g.
+   * `routerChatTransport(client, { pricing: { credits: true } })`.
+   */
+  surplus: SurplusRedemption[] | null
   transcript: AgentRunContext['transcript']
   /** Criterion.name of the first failing gate, when `verdict === 'blocked'`. */
   blockedBy?: string
@@ -217,7 +226,7 @@ export type AgentEvent =
   | { type: 'message.delta';      iteration: number; text: string }
   | { type: 'iteration.complete'; iteration: number; message: string }
   | { type: 'criterion.check';    iteration: number; name: string; ok: boolean; reason?: string }
-  | { type: 'verdict';            verdict: AgentRunVerdict; iterations: number; wallMs: number; usd: number | null; transcript: AgentRunContext['transcript']; blockedBy?: string; error?: string }
+  | { type: 'verdict';            verdict: AgentRunVerdict; iterations: number; wallMs: number; usd: number | null; surplus: SurplusRedemption[] | null; transcript: AgentRunContext['transcript']; blockedBy?: string; error?: string }
 
 export interface AgentBridgeOptions {
   harness: 'sandbox'
@@ -487,6 +496,7 @@ export class Agent {
 
     let iteration = 0
     let usd: number | null = null
+    let surplus: SurplusRedemption[] | null = null
     let blockedBy: string | undefined
 
     const buildVerdict = (
@@ -498,6 +508,7 @@ export class Agent {
       iterations: iteration,
       wallMs: Date.now() - start,
       usd,
+      surplus,
       transcript,
       ...(blockedBy != null ? { blockedBy } : {}),
       ...(extra.error != null ? { error: extra.error } : {}),
@@ -534,6 +545,7 @@ export class Agent {
           iterations: iteration - 1,
           wallMs: Date.now() - start,
           usd,
+          surplus,
           transcript,
           ...(blockedBy != null ? { blockedBy } : {}),
         }
@@ -570,6 +582,8 @@ export class Agent {
           }
           const priced = extractUsd(completion)
           if (priced != null) usd = (usd ?? 0) + priced
+          const redemptions = completion.surplus?.redemptions
+          if (redemptions?.length) surplus = [...(surplus ?? []), ...redemptions]
         }
       } catch (err) {
         transcript.push({ role: 'assistant', content: assistantContent })

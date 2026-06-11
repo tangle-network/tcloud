@@ -13,6 +13,10 @@
  * Zero config works immediately (anonymous rate-limited).
  * `tcloud wallet create` + `tcloud credits fund` enables full privacy.
  *
+ * A `pricing` block in ~/.tcloud/config.json applies market/limit pricing and
+ * Surplus credit spending to every inference the extension makes, e.g.
+ * `{ "pricing": { "mode": "limit", "maxOutputMicroPerM": 15000000, "credits": true } }`.
+ *
  * The wallet manages two keys:
  * - Funding key: used once to deposit into VAnchor shielded pool
  * - Spending key: ephemeral, signs x402 SpendAuth per request, rotated
@@ -20,7 +24,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from '@mariozechner/pi-coding-agent'
 import { Type } from '@sinclair/typebox'
-import { TCloudClient } from '@tangle-network/tcloud'
+import { TCloudClient, serializePricing, type PricingOptions, type SurplusRedemption } from '@tangle-network/tcloud'
 import { signSpendAuth, generateWallet, type ShieldedWallet } from '@tangle-network/tcloud/shielded'
 import type { Hex } from 'viem'
 import * as fs from 'fs'
@@ -44,6 +48,14 @@ interface SessionState {
   totalRequests: number
   operatorsRotated: number
   currentOperator: string | null
+  /**
+   * Market/limit price + Surplus credit preference applied to every inference
+   * this session makes. Loaded from config.json `pricing`; lets pi spend
+   * prepaid credits (or enforce a price cap) without per-call plumbing.
+   */
+  pricing: PricingOptions | null
+  /** Tokens debited from Surplus credits this session (prepaid, not billed). */
+  creditTokensSpent: number
 }
 
 interface WalletData {
@@ -58,7 +70,7 @@ function ensureDir() {
   if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
 }
 
-function loadConfig(): { apiKey?: string; apiUrl?: string; model?: string } {
+function loadConfig(): { apiKey?: string; apiUrl?: string; model?: string; pricing?: PricingOptions } {
   try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8')) } catch { return {} }
 }
 
@@ -111,6 +123,8 @@ export default function tcloudExtension(pi: ExtensionAPI) {
         totalRequests: 0,
         operatorsRotated: 0,
         currentOperator: null,
+        pricing: config.pricing ?? null,
+        creditTokensSpent: 0,
       })
     }
     return sessions.get(key)!
@@ -129,18 +143,27 @@ export default function tcloudExtension(pi: ExtensionAPI) {
     }
     // anonymous: no headers, rate-limited
 
+    const pricing = serializePricing(session.pricing ?? undefined)
     const res = await fetch(`${TCLOUD_API_URL}/v1/chat/completions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model, messages, max_tokens: 4096, stream: false }),
+      body: JSON.stringify({ model, messages, max_tokens: 4096, stream: false, ...(pricing ? { pricing } : {}) }),
     })
 
-    if (res.status === 402) throw new Error('Credits exhausted. Run: tcloud credits fund')
+    if (res.status === 402) {
+      const detail = await res.text().then(t => t.slice(0, 200)).catch(() => '')
+      throw new Error(detail.includes('limit_price_exceeded')
+        ? 'Limit price not met: market price is above your configured cap and no Surplus credit covers the call.'
+        : 'Credits exhausted. Run: tcloud credits fund')
+    }
     if (res.status === 429) throw new Error('Rate limited. Run: tcloud auth login')
     if (!res.ok) throw new Error(`tcloud ${res.status}: ${await res.text().then(t => t.slice(0, 200))}`)
 
     const data = await res.json() as any
     session.totalRequests++
+    for (const r of (data.surplus?.redemptions ?? []) as SurplusRedemption[]) {
+      session.creditTokensSpent += r.tokens_debited
+    }
 
     // Track operator rotation from response headers
     const routedOperator = res.headers.get('x-tangle-routed-operator')
@@ -254,6 +277,8 @@ export default function tcloudExtension(pi: ExtensionAPI) {
             wallet: session.wallet ? { commitment: session.wallet.commitment.slice(0, 20) + '...', address: session.wallet.spendingAddress } : null,
             requests: session.totalRequests,
             operators: session.operatorsRotated,
+            pricing: session.pricing,
+            creditTokensSpent: session.creditTokensSpent,
           }, null, 2) }],
         }
       }
@@ -298,6 +323,7 @@ export default function tcloudExtension(pi: ExtensionAPI) {
     const tag = s.level === 'shielded' ? 'priv' : s.level === 'authenticated' ? 'auth' : 'anon'
     const parts = [`[${tag}]`, `${s.totalRequests}req`]
     if (s.level === 'shielded') parts.push(`${s.operatorsRotated}ops`)
+    if (s.creditTokensSpent > 0) parts.push(`${s.creditTokensSpent}ctk`)
     ctx.ui.setWidget('tcloud', { title: 'tcloud', content: parts.join(' '), style: 'compact' } as any)
   }
 }

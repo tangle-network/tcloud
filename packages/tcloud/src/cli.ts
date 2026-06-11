@@ -8,7 +8,7 @@
  */
 
 import { Command } from 'commander'
-import { TCloud } from './index'
+import { TCloud, type PricingOptions } from './index'
 import { generateWallet, signSpendAuth, estimateCost, type ShieldedWallet } from './shielded'
 import { TCloudSandbox, type TCloudSandboxTee } from './sandbox'
 import * as fs from 'fs'
@@ -32,6 +32,33 @@ interface CLIConfig {
 
 function ensureDir() {
   if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 })
+}
+
+/** Build ChatOptions.pricing from `chat` command flags. USD-per-1M caps convert to micro-tsUSD. */
+function pricingFromFlags(opts: { maxInputPrice?: string; maxOutputPrice?: string; credits?: true | string }): PricingOptions | undefined {
+  const toMicro = (usdPerM: string | undefined, flag: string): number | undefined => {
+    if (usdPerM === undefined) return undefined
+    const usd = parseFloat(usdPerM)
+    if (!Number.isFinite(usd) || usd <= 0) {
+      console.error(`Invalid ${flag}: ${usdPerM} (expected USD per 1M tokens, e.g. 15.00)`)
+      process.exit(1)
+    }
+    return Math.round(usd * 1_000_000)
+  }
+  const maxInputMicroPerM = toMicro(opts.maxInputPrice, '--max-input-price')
+  const maxOutputMicroPerM = toMicro(opts.maxOutputPrice, '--max-output-price')
+  const credits: PricingOptions['credits'] | undefined =
+    opts.credits === undefined ? undefined
+    : opts.credits === true ? true
+    : opts.credits === 'off' || opts.credits === 'false' ? false
+    : { creditId: opts.credits }
+  if (maxInputMicroPerM === undefined && maxOutputMicroPerM === undefined && credits === undefined) return undefined
+  return {
+    ...(maxInputMicroPerM !== undefined || maxOutputMicroPerM !== undefined ? { mode: 'limit' as const } : {}),
+    ...(maxInputMicroPerM !== undefined ? { maxInputMicroPerM } : {}),
+    ...(maxOutputMicroPerM !== undefined ? { maxOutputMicroPerM } : {}),
+    ...(credits !== undefined ? { credits } : {}),
+  }
 }
 
 function loadConfig(): CLIConfig {
@@ -332,9 +359,13 @@ program.command('chat')
   .option('-m, --model <model>', 'Model')
   .option('--private', 'Use shielded credits (anonymous)')
   .option('--stream', 'Stream output', true)
+  .option('--max-input-price <usdPerM>', 'Limit order: only serve if input price <= this, USD per 1M tokens')
+  .option('--max-output-price <usdPerM>', 'Limit order: only serve if output price <= this, USD per 1M tokens')
+  .option('--credits [creditId]', "Spend Surplus prepaid credits: bare flag opts in, a value pins a credit id, 'off' opts out")
   .action(async (message, opts) => {
     const client = getClient({ private: opts.private })
     const model = opts.model || loadConfig().defaultModel
+    const pricing = pricingFromFlags(opts)
 
     if (!message) {
       // Interactive mode
@@ -343,7 +374,7 @@ program.command('chat')
       const ask = () => rl.question('> ', async (input) => {
         if (!input.trim()) { ask(); return }
         try {
-          for await (const chunk of client.askStream(input.trim(), { model })) {
+          for await (const chunk of client.askStream(input.trim(), { model, ...(pricing ? { pricing } : {}) })) {
             process.stdout.write(chunk)
           }
           process.stdout.write('\n\n')
@@ -356,12 +387,12 @@ program.command('chat')
 
     try {
       if (opts.stream) {
-        for await (const chunk of client.askStream(message, { model })) {
+        for await (const chunk of client.askStream(message, { model, ...(pricing ? { pricing } : {}) })) {
           process.stdout.write(chunk)
         }
         process.stdout.write('\n')
       } else {
-        const completion = await client.askFull(message, { model })
+        const completion = await client.askFull(message, { model, ...(pricing ? { pricing } : {}) })
         const text = completion.choices[0]?.message?.content || ''
         const usedModel = completion.model || model
         const usage = completion.usage
@@ -369,6 +400,10 @@ program.command('chat')
         if (usage) {
           const cost = usage.total_tokens * 0.000001 // rough estimate
           process.stdout.write(`  \u21B3 ${usage.total_tokens} tokens \u00B7 $${cost.toFixed(6)}\n`)
+        }
+        for (const r of completion.surplus?.redemptions ?? []) {
+          const strikeUsd = (r.strike_micro_per_m / 1_000_000).toFixed(2)
+          process.stdout.write(`  \u21B3 credit ${r.credit_id}: ${r.tokens_debited} ${r.token_kind} tokens @ $${strikeUsd}/M (prepaid)\n`)
         }
       }
     } catch (e: any) {

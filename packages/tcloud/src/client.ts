@@ -13,6 +13,7 @@ import type {
   ChatCompletionChunk,
   ChatMessage,
   BridgeOptions,
+  PricingOptions,
   Model,
   Operator,
   CreditBalance,
@@ -192,6 +193,7 @@ const PROTECTED_PROVIDER_OPTION_KEYS = new Set([
   'agentProfile',
   'session_id',
   'sessionId',
+  'pricing',
 ])
 
 function sanitizeProviderOptions(providerOptions: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -204,6 +206,39 @@ function sanitizeProviderOptions(providerOptions: Record<string, unknown> | unde
     }
   }
   return providerOptions
+}
+
+/**
+ * Serialize `ChatOptions.pricing` to the snake_case wire form sent as
+ * `body.pricing` on `/v1/chat/completions`, validating limit-mode caps.
+ * Exported for callers that build raw router requests (pi extension).
+ */
+export function serializePricing(pricing: PricingOptions | undefined): Record<string, unknown> | undefined {
+  if (!pricing) return undefined
+  for (const [key, cap] of [
+    ['maxInputMicroPerM', pricing.maxInputMicroPerM],
+    ['maxOutputMicroPerM', pricing.maxOutputMicroPerM],
+  ] as const) {
+    if (cap !== undefined && (!Number.isInteger(cap) || cap <= 0)) {
+      throw new TCloudError(400, `pricing.${key} must be a positive integer (micro-tsUSD per 1M tokens), got ${cap}`)
+    }
+  }
+  if (pricing.mode === 'limit' && pricing.maxInputMicroPerM === undefined && pricing.maxOutputMicroPerM === undefined) {
+    throw new TCloudError(400, "pricing.mode 'limit' requires maxInputMicroPerM and/or maxOutputMicroPerM")
+  }
+  return {
+    ...(pricing.mode !== undefined ? { mode: pricing.mode } : {}),
+    ...(pricing.maxInputMicroPerM !== undefined ? { max_input_micro_per_m: pricing.maxInputMicroPerM } : {}),
+    ...(pricing.maxOutputMicroPerM !== undefined ? { max_output_micro_per_m: pricing.maxOutputMicroPerM } : {}),
+    ...(pricing.credits !== undefined
+      ? {
+          credits:
+            typeof pricing.credits === 'object'
+              ? { ...(pricing.credits.creditId !== undefined ? { credit_id: pricing.credits.creditId } : {}) }
+              : pricing.credits,
+        }
+      : {}),
+  }
 }
 
 export class TCloudClient {
@@ -447,11 +482,22 @@ export class TCloudClient {
       const inputPrice = res ? parseFloat(res.headers.get('x-tangle-price-input') || '0') : 0
       const outputPrice = res ? parseFloat(res.headers.get('x-tangle-price-output') || '0') : 0
 
+      // Tokens debited from a Surplus credit were prepaid at the credit's
+      // strike when the credit was bought — only the remainder hits the
+      // USD balance this client meters.
+      const debited = { input: 0, output: 0 }
+      for (const r of completion.surplus?.redemptions ?? []) {
+        debited[r.token_kind] += r.tokens_debited
+      }
+      const promptTokens = Math.max(0, (completion.usage.prompt_tokens || 0) - debited.input)
+      const completionTokens = Math.max(0, (completion.usage.completion_tokens || 0) - debited.output)
+
       if (inputPrice > 0 || outputPrice > 0) {
-        estimatedCost = (completion.usage.prompt_tokens || 0) * inputPrice
-          + (completion.usage.completion_tokens || 0) * outputPrice
+        estimatedCost = promptTokens * inputPrice + completionTokens * outputPrice
       } else {
-        const tokens = completion.usage.total_tokens || 0
+        const tokens = debited.input || debited.output
+          ? promptTokens + completionTokens
+          : completion.usage.total_tokens || 0
         estimatedCost = tokens * 0.000001 // $1/M tokens fallback
       }
       this._totalSpent += estimatedCost
@@ -619,6 +665,7 @@ export class TCloudClient {
             : {}),
         }
       : undefined
+    const pricing = serializePricing(options.pricing)
     const sandboxBody: Record<string, unknown> = {}
     if (options.sandbox?.agentProfile) sandboxBody.agent_profile = options.sandbox.agentProfile
     if (options.sandbox?.sessionId) sandboxBody.session_id = options.sandbox.sessionId
@@ -642,6 +689,7 @@ export class TCloudClient {
       tool_choice: options.toolChoice,
       plugins: options.plugins,
       ...(gateway ? { gateway } : {}),
+      ...(pricing ? { pricing } : {}),
       ...sandboxBody,
     })
   }

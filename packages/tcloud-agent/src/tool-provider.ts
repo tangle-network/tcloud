@@ -9,6 +9,7 @@
 import type { TCloudClient } from '@tangle-network/tcloud'
 import type {
   ChatMessage,
+  PricingOptions,
   VideoResponse,
   AvatarJobStatus,
 } from '@tangle-network/tcloud'
@@ -38,6 +39,7 @@ const chatCapability: CapabilityHandler = {
     model: { type: 'string' },
     max_tokens: { type: 'number' },
     temperature: { type: 'number' },
+    pricing: { type: 'object', description: 'Market vs limit price + Surplus credits: { mode: "market"|"limit", maxInputMicroPerM?, maxOutputMicroPerM? (micro-tsUSD per 1M tokens), credits?: boolean|{creditId} }' },
   },
   async execute(input, client) {
     const result = await client.chat({
@@ -45,9 +47,18 @@ const chatCapability: CapabilityHandler = {
       model: input.model,
       maxTokens: input.max_tokens,
       temperature: input.temperature,
+      pricing: input.pricing as PricingOptions | undefined,
     })
     const text = result.choices[0]?.message?.content || ''
-    return { type: 'chat', data: { text, model: result.model, usage: result.usage } }
+    return {
+      type: 'chat',
+      data: {
+        text,
+        model: result.model,
+        usage: result.usage,
+        ...(result.surplus ? { surplus: result.surplus } : {}),
+      },
+    }
   },
 }
 
