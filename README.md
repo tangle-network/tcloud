@@ -115,14 +115,16 @@ Rotation strategies: `round-robin`, `random`, `min-exposure` (per-call dispatch,
 ## CLI
 
 ```bash
-npx tcloud chat "Hello"              # chat
-npx tcloud chat --private "Anon"     # anonymous inference
-npx tcloud models                    # list models
-npx tcloud search "Tangle docs" --provider exa --max-results 5
-npx tcloud operators                 # list operators
-npx tcloud wallet generate           # create shielded wallet
-npx tcloud credits balance           # check credits
+npx @tangle-network/tcloud chat "Hello"              # chat
+npx @tangle-network/tcloud chat --private "Anon"     # anonymous inference
+npx @tangle-network/tcloud models                    # list models
+npx @tangle-network/tcloud search "Tangle docs" --provider exa --max-results 5
+npx @tangle-network/tcloud operators                 # list operators
+npx @tangle-network/tcloud wallet generate           # create shielded wallet
+npx @tangle-network/tcloud credits balance           # check credits
 ```
+
+Do not install or execute the unscoped `tcloud` npm package. It is unrelated to Tangle.
 
 ## Live TEE E2E
 
