@@ -1,6 +1,6 @@
 # tcloud
 
-TypeScript SDK and CLI for [Tangle AI Cloud](https://router.tangle.tools) — decentralized LLM inference with operator routing, reputation-based selection, and anonymous payments via ShieldedCredits.
+TypeScript SDK and CLI for [Tangle Router](https://router.tangle.tools): model routing, sandbox-backed agent calls, operator routing, and anonymous payments via ShieldedCredits.
 
 Zero framework dependencies. Pure `fetch` + SSE. Works in Node.js, Deno, Bun, and edge runtimes.
 
@@ -37,21 +37,23 @@ Zero framework dependencies. Pure `fetch` + SSE. Works in Node.js, Deno, Bun, an
 ## Installation
 
 ```bash
-npm install tcloud
+npm install @tangle-network/tcloud
 ```
 
 Or run the CLI directly:
 
 ```bash
-npx tcloud chat "What is Tangle?"
+npx @tangle-network/tcloud chat "What is Tangle?"
 ```
+
+Do not install unscoped `tcloud`. It is unrelated to Tangle.
 
 ## SDK
 
 ### Quick Start
 
 ```ts
-import { TCloud } from 'tcloud'
+import { TCloud } from '@tangle-network/tcloud'
 
 // Set model at client creation — explicit and consistent.
 const client = new TCloud({
@@ -159,7 +161,7 @@ console.log(completion.choices[0].message.content)
 Anonymous inference with no API key. Uses EIP-712 SpendAuth signatures — the operator verifies payment without learning your identity.
 
 ```ts
-import { TCloud } from 'tcloud'
+import { TCloud } from '@tangle-network/tcloud'
 
 const client = TCloud.shielded()
 const answer = await client.ask('Hello from the shadows')
@@ -361,10 +363,10 @@ tcloud auth status             # Check current auth
 ### Chat
 
 ```bash
-tcloud chat "Explain zero-knowledge proofs"
-tcloud chat -m meta-llama/llama-4-maverick "Hello"
-tcloud chat --private "Anonymous request"  # ShieldedCredits mode
-tcloud chat                                # Interactive mode
+npx @tangle-network/tcloud chat "Explain zero-knowledge proofs"
+npx @tangle-network/tcloud chat -m meta-llama/llama-4-maverick "Hello"
+npx @tangle-network/tcloud chat --private "Anonymous request"  # ShieldedCredits mode
+npx @tangle-network/tcloud chat                                # Interactive mode
 ```
 
 ### Browse
