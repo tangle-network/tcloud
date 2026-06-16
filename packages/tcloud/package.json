@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/tcloud",
-  "version": "0.4.12",
+  "version": "0.4.13",
   "description": "TypeScript SDK and CLI for Tangle Router, Sandbox, model routing, and agent service calls",
   "type": "module",
   "main": "./dist/index.cjs",
