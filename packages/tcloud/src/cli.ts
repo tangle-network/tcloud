@@ -437,6 +437,16 @@ program.command('search')
     }
   })
 
+// ── MCP server (expose Tangle tools to any agent/harness) ──
+
+program.command('mcp')
+  .description('Run a Model Context Protocol (stdio) server exposing Tangle tools (web_search). Mount with: { "command": ["tcloud", "mcp"] }')
+  .action(async () => {
+    const { runMcpServer } = await import('./mcp')
+    const client = getClient() as TCloud
+    await runMcpServer(client)
+  })
+
 // ── media generation ──
 
 program.command('image-generate')
