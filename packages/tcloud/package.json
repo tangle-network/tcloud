@@ -1,6 +1,6 @@
 {
   "name": "@tangle-network/tcloud",
-  "version": "0.4.12",
+  "version": "0.4.13",
   "description": "TypeScript SDK and CLI for Tangle Router, Sandbox, model routing, and agent service calls",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -69,7 +69,7 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts src/cli.ts src/shielded.ts src/instance.ts src/attestation.ts src/sandbox.ts --format esm,cjs --dts --clean --external socks-proxy-agent",
+    "build": "tsup src/index.ts src/cli.ts src/mcp.ts src/shielded.ts src/instance.ts src/attestation.ts src/sandbox.ts --format esm,cjs --dts --clean --external socks-proxy-agent",
     "docs": "typedoc src/index.ts --out docs --name tcloud --readme README.md",
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
