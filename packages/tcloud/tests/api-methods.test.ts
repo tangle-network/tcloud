@@ -307,6 +307,50 @@ describe('search()', () => {
   })
 })
 
+describe('research()', () => {
+  let originalFetch: typeof globalThis.fetch
+  beforeEach(() => { originalFetch = globalThis.fetch })
+  afterEach(() => { globalThis.fetch = originalFetch })
+
+  it('calls /research with provider, effort, and output schema', async () => {
+    const outputSchema = { type: 'object', properties: { answer: { type: 'string' } } }
+    const response = {
+      id: 'research_123',
+      object: 'research.result',
+      provider: 'you',
+      query: 'state of WebGPU',
+      answer: 'WebGPU shipped in Chrome 113.',
+      results: [{ title: 'WebGPU', url: 'https://gpuweb.github.io' }],
+      citations: ['https://gpuweb.github.io'],
+      usage: { billed_cost: 0.05 },
+    }
+    const fn = mockFetch(response)
+    globalThis.fetch = fn
+    const client = new TCloudClient({
+      apiKey: 'sk-tan-test',
+      baseURL: 'https://router.test/v1',
+      retry: false,
+    })
+
+    const result = await client.research({
+      query: 'state of WebGPU',
+      provider: 'you',
+      effort: 'deep',
+      outputSchema,
+    })
+
+    expect(result).toEqual(response)
+    expect(fn.mock.calls[0][0]).toBe('https://router.test/v1/research')
+    expect(fn.mock.calls[0][1].method).toBe('POST')
+    expect(fn.mock.calls[0][1].headers.Authorization).toBe('Bearer sk-tan-test')
+    const body = JSON.parse(fn.mock.calls[0][1].body)
+    expect(body.query).toBe('state of WebGPU')
+    expect(body.provider).toBe('you')
+    expect(body.effort).toBe('deep')
+    expect(body.outputSchema).toEqual(outputSchema)
+  })
+})
+
 describe('video generation', () => {
   let originalFetch: typeof globalThis.fetch
   beforeEach(() => { originalFetch = globalThis.fetch })

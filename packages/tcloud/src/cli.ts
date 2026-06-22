@@ -11,6 +11,7 @@ import { Command } from 'commander'
 import { TCloud } from './index'
 import { generateWallet, signSpendAuth, estimateCost, type ShieldedWallet } from './shielded'
 import { TCloudSandbox, type TCloudSandboxTee } from './sandbox'
+import { packageVersion } from './version'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as readline from 'readline'
@@ -97,18 +98,6 @@ function optionalNumber(value: unknown): number | undefined {
 function teeType(value: string | undefined): TCloudSandboxTee | undefined {
   if (!value) return undefined
   return value.toLowerCase() as TCloudSandboxTee
-}
-
-function packageVersion(): string {
-  try {
-    const packageJson = JSON.parse(
-      fs.readFileSync(new URL('../package.json', import.meta.url), 'utf-8'),
-    ) as { version?: unknown }
-    if (typeof packageJson.version === 'string') return packageJson.version
-  } catch {
-    // Keep the CLI usable if package metadata is unavailable in a dev bundle.
-  }
-  return '0.0.0'
 }
 
 function printJson(value: unknown) {
@@ -435,6 +424,16 @@ program.command('search')
       console.error('Error:', e.message)
       process.exit(1)
     }
+  })
+
+// ── MCP server (expose Tangle tools to any agent/harness) ──
+
+program.command('mcp')
+  .description('Run a Model Context Protocol (stdio) server exposing Tangle tools (web_search, deep_research). Mount with: { "command": ["tcloud", "mcp"] }')
+  .action(async () => {
+    const { runMcpServer } = await import('./mcp')
+    const client = getClient() as TCloud
+    await runMcpServer(client)
   })
 
 // ── media generation ──
