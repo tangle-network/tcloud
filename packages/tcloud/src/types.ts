@@ -180,6 +180,58 @@ export interface SearchResponse {
   }
 }
 
+/** Providers served by the router's research API (POST /v1/research). Mirrors
+ *  SearchProvider minus `brave` (no research API). Each has its own `effort`
+ *  vocabulary — see ResearchOptions.effort. */
+export type ResearchProvider = 'perplexity' | 'exa' | 'you' | 'parallel' | 'tavily'
+
+export interface ResearchOptions {
+  query: string
+  provider?: ResearchProvider
+  /** Alias accepted by the Router for provider-compatible clients. */
+  model?: ResearchProvider
+  /** Depth/cost dial, provider-specific:
+   *  perplexity minimal|low|medium|high · you lite|standard|deep|exhaustive ·
+   *  exa deep-lite|deep|deep-reasoning · tavily mini|pro|auto ·
+   *  parallel lite|base|core|pro|ultra. Omit for the provider default. */
+  effort?: string
+  maxResults?: number
+  searchRecency?: SearchRecency
+  includeDomains?: string[]
+  excludeDomains?: string[]
+  /** Optional JSON schema requesting structured output from the provider. */
+  outputSchema?: unknown
+}
+
+export interface ResearchHit {
+  title: string
+  url: string
+  snippet?: string
+  publishedAt?: string
+  source?: string
+}
+
+export interface ResearchResponse {
+  id: string
+  object: 'research.result' | string
+  provider: ResearchProvider
+  query: string
+  /** The synthesized multi-step research answer. */
+  answer: string
+  /** Supporting sources behind the answer. */
+  results: ResearchHit[]
+  citations: string[]
+  /** Present when an outputSchema was requested and the provider honored it. */
+  structured?: unknown
+  usage?: {
+    upstream_cost?: number
+    billed_cost?: number
+    gross_margin?: number
+    markup?: number
+    billing_units?: Record<string, unknown>
+  }
+}
+
 export interface WebSearchPlugin {
   id: 'web'
   engine?: 'native' | 'exa' | 'parallel' | 'firecrawl'

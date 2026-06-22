@@ -26,6 +26,8 @@ import type {
   ImageResponse,
   RerankOptions,
   RerankResponse,
+  ResearchOptions,
+  ResearchResponse,
   SearchOptions,
   SearchResponse,
   CompletionOptions,
@@ -1061,6 +1063,27 @@ export class TCloudClient {
         searchRecency: options.searchRecency,
         includeDomains: options.includeDomains,
         excludeDomains: options.excludeDomains,
+      }),
+    })
+  }
+
+  /** Run a multi-step deep-research task through Tangle Router billing and
+   *  provider routing (POST /v1/research). Slower and costlier than `search` —
+   *  the provider synthesizes an answer over many fetches. Pick depth with
+   *  `effort` (provider-specific vocabulary; see {@link ResearchOptions.effort}). */
+  async research(options: ResearchOptions): Promise<ResearchResponse> {
+    return this._request(`${this.baseURL}/research`, {
+      method: 'POST',
+      body: JSON.stringify({
+        query: options.query,
+        provider: options.provider,
+        model: options.model,
+        effort: options.effort,
+        maxResults: options.maxResults,
+        searchRecency: options.searchRecency,
+        includeDomains: options.includeDomains,
+        excludeDomains: options.excludeDomains,
+        outputSchema: options.outputSchema,
       }),
     })
   }
