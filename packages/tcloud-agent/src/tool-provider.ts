@@ -218,6 +218,59 @@ const rerankCapability: CapabilityHandler = {
   },
 }
 
+const searchCapability: CapabilityHandler = {
+  name: 'search',
+  description: 'Live web search — ranked results (title, url, snippet) with citations',
+  schema: {
+    query: { type: 'string', required: true },
+    provider: { type: 'string', description: 'you | exa | perplexity | tavily | parallel | brave' },
+    maxResults: { type: 'number' },
+    searchRecency: { type: 'string', description: 'day | week | month | year' },
+  },
+  async execute(input, client) {
+    const result = await client.search({
+      query: input.query,
+      provider: input.provider,
+      maxResults: input.maxResults,
+      searchRecency: input.searchRecency,
+    })
+    return {
+      type: 'search',
+      data: { provider: result.provider, query: result.query, results: result.data, citations: result.citations },
+    }
+  },
+}
+
+const researchCapability: CapabilityHandler = {
+  name: 'research',
+  description: 'Multi-step deep research — a synthesized answer with citations (slower/costlier than search)',
+  schema: {
+    query: { type: 'string', required: true },
+    provider: { type: 'string', description: 'you | exa | perplexity | tavily | parallel' },
+    effort: { type: 'string', description: 'Depth/cost dial (provider-specific): you lite|standard|deep|exhaustive · perplexity minimal|low|medium|high · exa deep-lite|deep|deep-reasoning · tavily mini|pro|auto · parallel lite|base|core|pro|ultra' },
+    maxResults: { type: 'number' },
+  },
+  async execute(input, client) {
+    const result = await client.research({
+      query: input.query,
+      provider: input.provider,
+      effort: input.effort,
+      maxResults: input.maxResults,
+    })
+    return {
+      type: 'research',
+      data: {
+        provider: result.provider,
+        query: result.query,
+        answer: result.answer,
+        citations: result.citations,
+        results: result.results,
+        ...(result.structured !== undefined ? { structured: result.structured } : {}),
+      },
+    }
+  },
+}
+
 // ── Provider ──
 
 export class TangleToolProvider {
@@ -232,6 +285,8 @@ export class TangleToolProvider {
     this.register(videoCapability)
     this.register(avatarCapability)
     this.register(rerankCapability)
+    this.register(searchCapability)
+    this.register(researchCapability)
   }
 
   register(handler: CapabilityHandler) {
