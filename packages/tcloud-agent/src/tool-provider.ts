@@ -224,19 +224,32 @@ const searchCapability: CapabilityHandler = {
   schema: {
     query: { type: 'string', required: true },
     provider: { type: 'string', description: 'you | exa | perplexity | tavily | parallel | brave' },
+    model: { type: 'string', description: 'Provider alias accepted by the Router' },
     maxResults: { type: 'number' },
     searchRecency: { type: 'string', description: 'day | week | month | year' },
+    includeDomains: { type: 'array', items: { type: 'string' }, description: 'Restrict to these domains' },
+    excludeDomains: { type: 'array', items: { type: 'string' }, description: 'Drop these domains' },
   },
   async execute(input, client) {
+    if (!input.query) throw new Error('search requires a "query"')
     const result = await client.search({
       query: input.query,
       provider: input.provider,
+      model: input.model,
       maxResults: input.maxResults,
       searchRecency: input.searchRecency,
+      includeDomains: input.includeDomains,
+      excludeDomains: input.excludeDomains,
     })
     return {
       type: 'search',
-      data: { provider: result.provider, query: result.query, results: result.data, citations: result.citations },
+      data: {
+        provider: result.provider,
+        query: result.query,
+        results: result.data,
+        citations: result.citations,
+        usage: result.usage,
+      },
     }
   },
 }
@@ -247,15 +260,26 @@ const researchCapability: CapabilityHandler = {
   schema: {
     query: { type: 'string', required: true },
     provider: { type: 'string', description: 'you | exa | perplexity | tavily | parallel' },
+    model: { type: 'string', description: 'Provider alias accepted by the Router' },
     effort: { type: 'string', description: 'Depth/cost dial (provider-specific): you lite|standard|deep|exhaustive · perplexity minimal|low|medium|high · exa deep-lite|deep|deep-reasoning · tavily mini|pro|auto · parallel lite|base|core|pro|ultra' },
     maxResults: { type: 'number' },
+    searchRecency: { type: 'string', description: 'day | week | month | year' },
+    includeDomains: { type: 'array', items: { type: 'string' }, description: 'Restrict sources to these domains' },
+    excludeDomains: { type: 'array', items: { type: 'string' }, description: 'Drop sources from these domains' },
+    outputSchema: { type: 'object', description: 'JSON schema requesting structured output' },
   },
   async execute(input, client) {
+    if (!input.query) throw new Error('research requires a "query"')
     const result = await client.research({
       query: input.query,
       provider: input.provider,
+      model: input.model,
       effort: input.effort,
       maxResults: input.maxResults,
+      searchRecency: input.searchRecency,
+      includeDomains: input.includeDomains,
+      excludeDomains: input.excludeDomains,
+      outputSchema: input.outputSchema,
     })
     return {
       type: 'research',
@@ -265,6 +289,7 @@ const researchCapability: CapabilityHandler = {
         answer: result.answer,
         citations: result.citations,
         results: result.results,
+        usage: result.usage,
         ...(result.structured !== undefined ? { structured: result.structured } : {}),
       },
     }
