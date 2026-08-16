@@ -54,11 +54,10 @@ import { TCloudClient, type ChatCompletion, type ChatCompletionChunk, type ChatM
 // ── Part types (wrappers over the sandbox SDK session-gateway shape) ─────────
 //
 // The sandbox SDK defines these in its `session-gateway/agent-connection.ts`
-// (and canonically in `@tangle-network/agent-interface`). That package isn't
-// published to the registry yet and older `@tangle-network/sandbox` builds do not
-// re-export them, so we redeclare the minimal shape locally and re-export it
-// for consumers. When the interface package ships we can flip these to a
-// direct re-export without churning the consumer surface.
+// and canonically in `@tangle-network/agent-interface`. `@tangle-network/sandbox`
+// does not re-export them, so we redeclare the minimal shape here and re-export
+// it for consumers. A direct `@tangle-network/agent-interface` dependency would
+// let these become a re-export without churning the consumer surface.
 
 /** Text delta emitted by the sandbox sidecar as the model streams tokens. */
 export interface TextPart {
@@ -309,13 +308,17 @@ class SandboxSdkAgentSessionTransport implements AgentSessionTransport {
   start(input: AgentSessionStart): AgentSession {
     const sandbox = this.options.sandbox
     const sessionId = input.resume ?? this.options.sessionId
+    const backend = this.options.backend ?? {}
+    // `backend.profile` carries an inline profile definition only. A cataloged
+    // profile is an id, so it travels as the model selector — the same routing
+    // the bridge transport applies to a string profile.
     const promptOptions: PromptOptions = {
       sessionId,
       timeoutMs: this.options.timeoutMs,
-      backend: {
-        ...(this.options.backend ?? {}),
-        profile: input.profile,
-      },
+      backend:
+        typeof input.profile === 'string'
+          ? { ...backend, model: { ...(backend.model ?? {}), model: input.profile } }
+          : { ...backend, profile: input.profile },
       context: input.workspace?.dir ? { workspaceDir: input.workspace.dir } : undefined,
     }
 

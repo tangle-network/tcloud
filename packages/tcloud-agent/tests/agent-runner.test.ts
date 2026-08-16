@@ -396,8 +396,33 @@ describe('Agent.run', () => {
     expect(prompts[0].message).toBe('hi')
     expect(prompts[0].options).toMatchObject({
       sessionId: 'sdk-session',
-      backend: { profile: 'sf-proposer' },
+      backend: { model: { model: 'sf-proposer' } },
     })
+    expect((prompts[0].options as { backend: { profile?: unknown } }).backend.profile).toBeUndefined()
+  })
+
+  it('Sandbox SDK transport sends an inline profile on backend.profile', async () => {
+    const prompts: Array<{ message: string; options: unknown }> = []
+    const sandbox = {
+      async prompt(message: string, options: unknown) {
+        prompts.push({ message, options })
+        return { success: true, response: 'sdk ok', durationMs: 12 }
+      },
+      async *streamPrompt() {
+        throw new Error('streamPrompt should not be used when stream:false')
+      },
+    }
+    const profile = { model: { default: 'kimi-k2' } }
+    await agent({
+      transport: sandboxSdkTransport({ sandbox: sandbox as any }),
+      profile: profile as any,
+      brief: 'hi',
+      stream: false,
+    }).run()
+    expect(prompts[0].options).toMatchObject({ backend: { profile } })
+    expect(
+      (prompts[0].options as { backend: { model?: { model?: string } } }).backend.model?.model,
+    ).toBeUndefined()
   })
 
   it('forces non-streaming when usd budget is set so cost accounting can run', async () => {

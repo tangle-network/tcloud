@@ -1,2 +1,6 @@
 packages:
   - 'packages/*'
+# First-party packages are cut and consumed inside this fleet, so a release-age
+# hold on them would freeze this workspace behind its own cohort.
+minimumReleaseAgeExclude:
+  - '@tangle-network/*'
