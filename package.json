@@ -5,6 +5,7 @@
   "description": "TypeScript SDK, CLI, agent, and relayer for Tangle AI Cloud",
   "scripts": {
     "build": "pnpm -r build",
+    "test:scripts": "node --test scripts/*.test.mjs",
     "dev": "pnpm --filter tcloud dev",
     "dev:relayer": "pnpm --filter tcloud-relayer dev"
   },

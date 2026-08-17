@@ -54,11 +54,10 @@ import { TCloudClient, type ChatCompletion, type ChatCompletionChunk, type ChatM
 // ── Part types (wrappers over the sandbox SDK session-gateway shape) ─────────
 //
 // The sandbox SDK defines these in its `session-gateway/agent-connection.ts`
-// (and canonically in `@tangle-network/agent-interface`). That package isn't
-// published to the registry yet and older `@tangle-network/sandbox` builds do not
-// re-export them, so we redeclare the minimal shape locally and re-export it
-// for consumers. When the interface package ships we can flip these to a
-// direct re-export without churning the consumer surface.
+// and canonically in `@tangle-network/agent-interface`. `@tangle-network/sandbox`
+// does not re-export them, so we redeclare the minimal shape here and re-export
+// it for consumers. A direct `@tangle-network/agent-interface` dependency would
+// let these become a re-export without churning the consumer surface.
 
 /** Text delta emitted by the sandbox sidecar as the model streams tokens. */
 export interface TextPart {
@@ -309,13 +308,23 @@ class SandboxSdkAgentSessionTransport implements AgentSessionTransport {
   start(input: AgentSessionStart): AgentSession {
     const sandbox = this.options.sandbox
     const sessionId = input.resume ?? this.options.sessionId
+    const backend = this.options.backend ?? {}
+    // `backend.profile` carries an inline profile definition only. A cataloged
+    // profile is an id, so it travels on `PromptOptions.model`: the SDK folds
+    // that into `backend.model.model`, keeps the transport's provider, apiKey
+    // and baseUrl, rejects an empty id, and throws on a conflict with an
+    // explicit transport-level model instead of silently preferring one.
+    // The two selectors never travel together — one names the profile, the
+    // other carries it inline, and the wire defines no precedence between them.
+    const { profile: _transportProfile, ...backendWithoutProfile } = backend
+    const selection: Pick<PromptOptions, 'model' | 'backend'> =
+      typeof input.profile === 'string'
+        ? { model: input.profile, backend: backendWithoutProfile }
+        : { backend: { ...backend, profile: input.profile } }
     const promptOptions: PromptOptions = {
       sessionId,
       timeoutMs: this.options.timeoutMs,
-      backend: {
-        ...(this.options.backend ?? {}),
-        profile: input.profile,
-      },
+      ...selection,
       context: input.workspace?.dir ? { workspaceDir: input.workspace.dir } : undefined,
     }
 
@@ -717,13 +726,19 @@ function mergeSandbox(
 }
 
 function promptOptionsForTurn(base: PromptOptions, turn: AgentSessionChatOptions): PromptOptions {
+  const sessionId = turn.sandbox?.sessionId ?? base.sessionId
+  const inlineProfile = turn.sandbox?.agentProfile
+  if (!inlineProfile) return { ...base, sessionId }
+
+  // An inline profile for this turn replaces the session's cataloged selector,
+  // so the cataloged id goes. A transport-level `backend.model` stays: the
+  // sandbox treats an inline profile and a model override as separate fields,
+  // which is what `start()` sends for an inline profile as well.
+  const { model: _catalogedProfile, ...withoutCatalogedProfile } = base
   return {
-    ...base,
-    sessionId: turn.sandbox?.sessionId ?? base.sessionId,
-    backend: {
-      ...(base.backend ?? {}),
-      ...(turn.sandbox?.agentProfile ? { profile: turn.sandbox.agentProfile } : {}),
-    },
+    ...withoutCatalogedProfile,
+    sessionId,
+    backend: { ...(base.backend ?? {}), profile: inlineProfile },
   }
 }
 
