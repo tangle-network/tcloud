@@ -126,6 +126,31 @@ async function collect(iter: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
 
 // ---- run() tests (renamed from runUntil) -----------------------------------
 
+// ---- Fake sandbox -----------------------------------------------------------
+//
+// Records every prompt the sandbox SDK transport sends. `streamPrompt` throws
+// so a test that expects the non-streaming path fails loudly if it takes the
+// other one.
+
+function makeRecordingSandbox() {
+  const prompts: Array<{ message: string; options: unknown }> = []
+  const sandbox = {
+    async prompt(message: string, options: unknown) {
+      prompts.push({ message, options })
+      return {
+        success: true,
+        response: 'sdk ok',
+        durationMs: 12,
+        usage: { inputTokens: 3, outputTokens: 4 },
+      }
+    },
+    async *streamPrompt() {
+      throw new Error('streamPrompt should not be used when stream:false')
+    },
+  }
+  return { prompts, sandbox }
+}
+
 describe('Agent.run', () => {
   it('returns verified on iteration 1 when all criteria pass', async () => {
     const { client, calls } = makeFakeClient([makeCompletion('build passed, tsc ok')])
@@ -369,21 +394,7 @@ describe('Agent.run', () => {
   })
 
   it('Sandbox SDK transport maps prompt responses into agent completions', async () => {
-    const prompts: Array<{ message: string; options: unknown }> = []
-    const sandbox = {
-      async prompt(message: string, options: unknown) {
-        prompts.push({ message, options })
-        return {
-          success: true,
-          response: 'sdk ok',
-          durationMs: 12,
-          usage: { inputTokens: 3, outputTokens: 4 },
-        }
-      },
-      async *streamPrompt() {
-        throw new Error('streamPrompt should not be used when stream:false')
-      },
-    }
+    const { prompts, sandbox } = makeRecordingSandbox()
     const result = await agent({
       transport: sandboxSdkTransport({ sandbox: sandbox as any }),
       profile: 'sf-proposer',
@@ -404,16 +415,7 @@ describe('Agent.run', () => {
   })
 
   it('Sandbox SDK transport keeps the transport model transport beside a cataloged profile', async () => {
-    const prompts: Array<{ message: string; options: unknown }> = []
-    const sandbox = {
-      async prompt(message: string, options: unknown) {
-        prompts.push({ message, options })
-        return { success: true, response: 'sdk ok', durationMs: 12 }
-      },
-      async *streamPrompt() {
-        throw new Error('streamPrompt should not be used when stream:false')
-      },
-    }
+    const { prompts, sandbox } = makeRecordingSandbox()
     await agent({
       transport: sandboxSdkTransport({
         sandbox: sandbox as any,
@@ -433,16 +435,7 @@ describe('Agent.run', () => {
   })
 
   it('Sandbox SDK transport drops a transport-level inline profile for a cataloged profile', async () => {
-    const prompts: Array<{ message: string; options: unknown }> = []
-    const sandbox = {
-      async prompt(message: string, options: unknown) {
-        prompts.push({ message, options })
-        return { success: true, response: 'sdk ok', durationMs: 12 }
-      },
-      async *streamPrompt() {
-        throw new Error('streamPrompt should not be used when stream:false')
-      },
-    }
+    const { prompts, sandbox } = makeRecordingSandbox()
     await agent({
       transport: sandboxSdkTransport({
         sandbox: sandbox as any,
@@ -458,17 +451,43 @@ describe('Agent.run', () => {
     ).toBeUndefined()
   })
 
+  it('Sandbox SDK transport swaps the cataloged id for a turn inline profile and keeps the model transport', async () => {
+    const { prompts, sandbox } = makeRecordingSandbox()
+    const turnProfile = { name: 'turn', prompt: 'be brief', model: { default: 'kimi-k2' } }
+    const session = sandboxSdkTransport({
+      sandbox: sandbox as any,
+      backend: { model: { provider: 'zai', apiKey: 'k', model: 'claude-x' } } as any,
+    }).start({ profile: 'sf-proposer' })
+
+    await session.chat({
+      messages: [{ role: 'user', content: 'hi' }],
+      sandbox: { agentProfile: turnProfile as any },
+    })
+
+    // The cataloged id goes; the operator's explicit model override survives,
+    // which is what `start()` sends for an inline profile as well.
+    expect(prompts[0].options).toMatchObject({
+      backend: { profile: turnProfile, model: { provider: 'zai', apiKey: 'k', model: 'claude-x' } },
+    })
+    expect((prompts[0].options as { model?: unknown }).model).toBeUndefined()
+  })
+
+  it('Sandbox SDK transport leaves a turn without an inline profile on the cataloged id', async () => {
+    const { prompts, sandbox } = makeRecordingSandbox()
+    const session = sandboxSdkTransport({ sandbox: sandbox as any }).start({
+      profile: 'sf-proposer',
+    })
+
+    await session.chat({ messages: [{ role: 'user', content: 'hi' }] })
+
+    expect(prompts[0].options).toMatchObject({ model: 'sf-proposer' })
+    expect(
+      (prompts[0].options as { backend?: { profile?: unknown } }).backend?.profile,
+    ).toBeUndefined()
+  })
+
   it('Sandbox SDK transport sends an inline profile on backend.profile', async () => {
-    const prompts: Array<{ message: string; options: unknown }> = []
-    const sandbox = {
-      async prompt(message: string, options: unknown) {
-        prompts.push({ message, options })
-        return { success: true, response: 'sdk ok', durationMs: 12 }
-      },
-      async *streamPrompt() {
-        throw new Error('streamPrompt should not be used when stream:false')
-      },
-    }
+    const { prompts, sandbox } = makeRecordingSandbox()
     const profile = { model: { default: 'kimi-k2' } }
     await agent({
       transport: sandboxSdkTransport({ sandbox: sandbox as any }),

@@ -730,15 +730,16 @@ function promptOptionsForTurn(base: PromptOptions, turn: AgentSessionChatOptions
   const inlineProfile = turn.sandbox?.agentProfile
   if (!inlineProfile) return { ...base, sessionId }
 
-  // An inline profile for this turn replaces the session's cataloged selector.
-  // Sending both leaves the request with two selectors and no defined
-  // precedence, so drop the model id while keeping provider, apiKey and baseUrl.
+  // An inline profile for this turn replaces the session's cataloged selector,
+  // so the cataloged id goes. A transport-level `backend.model` stays: the
+  // sandbox treats an inline profile and a model override as separate fields,
+  // which is what `start()` sends for an inline profile as well.
   const { model: _catalogedProfile, ...withoutCatalogedProfile } = base
-  const { model: _modelId, ...modelTransport } = base.backend?.model ?? {}
-  const backend = { ...(base.backend ?? {}), profile: inlineProfile }
-  if (Object.keys(modelTransport).length > 0) backend.model = modelTransport
-  else delete backend.model
-  return { ...withoutCatalogedProfile, sessionId, backend }
+  return {
+    ...withoutCatalogedProfile,
+    sessionId,
+    backend: { ...(base.backend ?? {}), profile: inlineProfile },
+  }
 }
 
 function lastUserText(messages: ChatMessage[]): string {
