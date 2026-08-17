@@ -16,6 +16,7 @@
   ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
+    "prepublishOnly": "node ../../scripts/check-cohort-ranges.mjs && pnpm build",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js"
   },

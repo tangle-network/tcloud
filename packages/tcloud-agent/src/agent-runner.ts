@@ -310,15 +310,21 @@ class SandboxSdkAgentSessionTransport implements AgentSessionTransport {
     const sessionId = input.resume ?? this.options.sessionId
     const backend = this.options.backend ?? {}
     // `backend.profile` carries an inline profile definition only. A cataloged
-    // profile is an id, so it travels as the model selector — the same routing
-    // the bridge transport applies to a string profile.
+    // profile is an id, so it travels on `PromptOptions.model`: the SDK folds
+    // that into `backend.model.model`, keeps the transport's provider, apiKey
+    // and baseUrl, rejects an empty id, and throws on a conflict with an
+    // explicit transport-level model instead of silently preferring one.
+    // The two selectors never travel together — one names the profile, the
+    // other carries it inline, and the wire defines no precedence between them.
+    const { profile: _transportProfile, ...backendWithoutProfile } = backend
+    const selection: Pick<PromptOptions, 'model' | 'backend'> =
+      typeof input.profile === 'string'
+        ? { model: input.profile, backend: backendWithoutProfile }
+        : { backend: { ...backend, profile: input.profile } }
     const promptOptions: PromptOptions = {
       sessionId,
       timeoutMs: this.options.timeoutMs,
-      backend:
-        typeof input.profile === 'string'
-          ? { ...backend, model: { ...(backend.model ?? {}), model: input.profile } }
-          : { ...backend, profile: input.profile },
+      ...selection,
       context: input.workspace?.dir ? { workspaceDir: input.workspace.dir } : undefined,
     }
 
@@ -720,14 +726,19 @@ function mergeSandbox(
 }
 
 function promptOptionsForTurn(base: PromptOptions, turn: AgentSessionChatOptions): PromptOptions {
-  return {
-    ...base,
-    sessionId: turn.sandbox?.sessionId ?? base.sessionId,
-    backend: {
-      ...(base.backend ?? {}),
-      ...(turn.sandbox?.agentProfile ? { profile: turn.sandbox.agentProfile } : {}),
-    },
-  }
+  const sessionId = turn.sandbox?.sessionId ?? base.sessionId
+  const inlineProfile = turn.sandbox?.agentProfile
+  if (!inlineProfile) return { ...base, sessionId }
+
+  // An inline profile for this turn replaces the session's cataloged selector.
+  // Sending both leaves the request with two selectors and no defined
+  // precedence, so drop the model id while keeping provider, apiKey and baseUrl.
+  const { model: _catalogedProfile, ...withoutCatalogedProfile } = base
+  const { model: _modelId, ...modelTransport } = base.backend?.model ?? {}
+  const backend = { ...(base.backend ?? {}), profile: inlineProfile }
+  if (Object.keys(modelTransport).length > 0) backend.model = modelTransport
+  else delete backend.model
+  return { ...withoutCatalogedProfile, sessionId, backend }
 }
 
 function lastUserText(messages: ChatMessage[]): string {

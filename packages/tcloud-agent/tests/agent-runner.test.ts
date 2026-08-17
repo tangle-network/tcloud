@@ -396,9 +396,66 @@ describe('Agent.run', () => {
     expect(prompts[0].message).toBe('hi')
     expect(prompts[0].options).toMatchObject({
       sessionId: 'sdk-session',
-      backend: { model: { model: 'sf-proposer' } },
+      model: 'sf-proposer',
     })
-    expect((prompts[0].options as { backend: { profile?: unknown } }).backend.profile).toBeUndefined()
+    expect(
+      (prompts[0].options as { backend?: { profile?: unknown } }).backend?.profile,
+    ).toBeUndefined()
+  })
+
+  it('Sandbox SDK transport keeps the transport model transport beside a cataloged profile', async () => {
+    const prompts: Array<{ message: string; options: unknown }> = []
+    const sandbox = {
+      async prompt(message: string, options: unknown) {
+        prompts.push({ message, options })
+        return { success: true, response: 'sdk ok', durationMs: 12 }
+      },
+      async *streamPrompt() {
+        throw new Error('streamPrompt should not be used when stream:false')
+      },
+    }
+    await agent({
+      transport: sandboxSdkTransport({
+        sandbox: sandbox as any,
+        backend: { model: { provider: 'zai', apiKey: 'k' } } as any,
+      }),
+      profile: 'sf-proposer',
+      brief: 'hi',
+      stream: false,
+    }).run()
+    expect(prompts[0].options).toMatchObject({
+      model: 'sf-proposer',
+      backend: { model: { provider: 'zai', apiKey: 'k' } },
+    })
+    expect(
+      (prompts[0].options as { backend?: { model?: { model?: unknown } } }).backend?.model?.model,
+    ).toBeUndefined()
+  })
+
+  it('Sandbox SDK transport drops a transport-level inline profile for a cataloged profile', async () => {
+    const prompts: Array<{ message: string; options: unknown }> = []
+    const sandbox = {
+      async prompt(message: string, options: unknown) {
+        prompts.push({ message, options })
+        return { success: true, response: 'sdk ok', durationMs: 12 }
+      },
+      async *streamPrompt() {
+        throw new Error('streamPrompt should not be used when stream:false')
+      },
+    }
+    await agent({
+      transport: sandboxSdkTransport({
+        sandbox: sandbox as any,
+        backend: { profile: { model: { default: 'kimi-k2' } } } as any,
+      }),
+      profile: 'sf-proposer',
+      brief: 'hi',
+      stream: false,
+    }).run()
+    expect(prompts[0].options).toMatchObject({ model: 'sf-proposer' })
+    expect(
+      (prompts[0].options as { backend?: { profile?: unknown } }).backend?.profile,
+    ).toBeUndefined()
   })
 
   it('Sandbox SDK transport sends an inline profile on backend.profile', async () => {
@@ -421,8 +478,9 @@ describe('Agent.run', () => {
     }).run()
     expect(prompts[0].options).toMatchObject({ backend: { profile } })
     expect(
-      (prompts[0].options as { backend: { model?: { model?: string } } }).backend.model?.model,
+      (prompts[0].options as { backend?: { model?: { model?: string } } }).backend?.model?.model,
     ).toBeUndefined()
+    expect((prompts[0].options as { model?: unknown }).model).toBeUndefined()
   })
 
   it('forces non-streaming when usd budget is set so cost accounting can run', async () => {

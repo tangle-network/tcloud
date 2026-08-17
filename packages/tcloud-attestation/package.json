@@ -20,6 +20,7 @@
   },
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "prepublishOnly": "node ../../scripts/check-cohort-ranges.mjs && pnpm build",
     "test": "vitest run",
     "check-types": "tsc --noEmit"
   },
