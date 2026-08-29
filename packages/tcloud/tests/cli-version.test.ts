@@ -6,9 +6,10 @@ import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 
 const execFileAsync = promisify(execFile)
+const tsxCli = resolve('node_modules/tsx/dist/cli.mjs')
 
 async function cliHelp(command: string): Promise<string> {
-  const { stdout } = await execFileAsync('pnpm', ['exec', 'tsx', 'src/cli.ts', command, '--help'], {
+  const { stdout } = await execFileAsync(process.execPath, [tsxCli, 'src/cli.ts', command, '--help'], {
     cwd: resolve('.'),
     timeout: 20_000,
   })
@@ -42,7 +43,7 @@ describe('tcloud CLI version', () => {
   it('prefers TANGLE_API_KEY over legacy TCLOUD_API_KEY', async () => {
     const home = await mkdtemp(join(tmpdir(), 'tcloud-cli-env-'))
     try {
-      const { stdout } = await execFileAsync('pnpm', ['exec', 'tsx', 'src/cli.ts', 'auth', 'status'], {
+      const { stdout } = await execFileAsync(process.execPath, [tsxCli, 'src/cli.ts', 'auth', 'status'], {
         cwd: resolve('.'),
         env: {
           ...process.env,

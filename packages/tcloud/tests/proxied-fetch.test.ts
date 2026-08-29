@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { TCloudClient, TCloudError } from '../src/client'
+import type { PrivacyConfig } from '../src/types'
 
 describe('proxiedFetch modes', () => {
   let originalFetch: typeof globalThis.fetch
@@ -81,13 +82,16 @@ describe('proxiedFetch modes', () => {
     await expect(client.models()).rejects.toThrow(/relayerUrl is required/)
   })
 
-  it('socks5 mode: throws if socksProxy is missing', async () => {
+  it('rejects unsupported privacy modes without sending the request', async () => {
+    const fn = vi.fn()
+    globalThis.fetch = fn
     const client = new TCloudClient({
       apiKey: 'sk-tan-test',
-      privacy: { mode: 'socks5' }, // no socksProxy
+      privacy: { mode: 'unsupported' } as unknown as PrivacyConfig,
       retry: false,
     })
-    await expect(client.models()).rejects.toThrow(/socksProxy is required/)
+    await expect(client.models()).rejects.toThrow(/Unsupported privacy mode/)
+    expect(fn).not.toHaveBeenCalled()
   })
 
   it('no privacy config: uses direct fetch', async () => {

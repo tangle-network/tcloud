@@ -385,15 +385,10 @@ export interface AvatarJobStatus {
 }
 
 export interface PrivacyConfig {
-  /** 'direct' — no proxy (default). 'relayer' — route through tcloud-relayer. 'socks5' — route through SOCKS5 proxy (e.g. Tor). */
-  mode: 'direct' | 'relayer' | 'socks5'
+  /** 'direct' — no proxy (default). 'relayer' — route through tcloud-relayer. */
+  mode: 'direct' | 'relayer'
   /** Relayer URL for 'relayer' mode (e.g. 'http://localhost:3030') */
   relayerUrl?: string
-  /**
-   * SOCKS5 proxy URL for 'socks5' mode (e.g. 'socks5://127.0.0.1:9050' for Tor).
-   * Requires `socks-proxy-agent` as an optional peer dependency.
-   */
-  socksProxy?: string
 }
 
 export interface ShieldedConfig {

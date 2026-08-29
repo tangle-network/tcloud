@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { TCloudClient, TCloudError } from '../src/client'
+import { packageVersion } from '../src/version'
 import type { ChatCompletion, ChatCompletionChunk } from '../src/types'
 
 const COMPLETION: ChatCompletion = {
@@ -97,7 +98,7 @@ describe('chat()', () => {
     const client = new TCloudClient({ apiKey: 'sk-tan-test' })
     await client.chat({ messages: [{ role: 'user', content: 'hi' }] })
     const headers = (globalThis.fetch as any).mock.calls[0][1].headers
-    expect(headers['X-Tangle-Client']).toMatch(/^tcloud-sdk\//)
+    expect(headers['X-Tangle-Client']).toBe(`tcloud-sdk/${packageVersion()}`)
   })
 
   it('returns completion', async () => {
