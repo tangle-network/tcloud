@@ -183,7 +183,7 @@ jobs:
             --outfile="$CONSUMER_DIR/bundle.mjs"
           node "$CONSUMER_DIR/bundle.mjs"
 
-      - name: Install trusted-publishing npm
+      - name: Install release npm
         run: npm install --global npm@12.0.1 --registry=https://registry.npmjs.org
 
       - name: Publish and verify npm artifact
@@ -193,6 +193,7 @@ jobs:
           EXPECTED_VERSION: ${{ steps.release.outputs.version }}
           EXPECTED_SHA1: ${{ steps.artifact.outputs.sha1 }}
           REGISTRY: https://registry.npmjs.org
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
 
