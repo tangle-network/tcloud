@@ -1,0 +1,244 @@
+name: Release @tangle-network/tcloud
+
+on:
+  push:
+    tags:
+      - '@tangle-network/tcloud@*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing @tangle-network/tcloud release tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: npm-release-tcloud
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 1
+
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.23.1
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+
+      - name: Validate release tag
+        id: release
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          package_name="$(node -p "require('./packages/tcloud/package.json').name")"
+          package_version="$(node -p "require('./packages/tcloud/package.json').version")"
+          expected_tag="${package_name}@${package_version}"
+          checkout_sha="$(git rev-parse HEAD)"
+          tag_sha="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+
+          if [[ "$package_name" != '@tangle-network/tcloud' ]]; then
+            echo "Unexpected package name: $package_name" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
+            echo "Release tag $RELEASE_TAG does not match $expected_tag" >&2
+            exit 1
+          fi
+          if [[ "$tag_sha" != "$checkout_sha" ]]; then
+            echo "Tag $RELEASE_TAG points to $tag_sha, checked out $checkout_sha" >&2
+            exit 1
+          fi
+
+          {
+            echo "name=$package_name"
+            echo "version=$package_version"
+            echo "tag=$RELEASE_TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release $RELEASE_TAG is $checkout_sha"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate package dependencies
+        run: node scripts/check-cohort-ranges.mjs
+
+      - name: Build tcloud
+        run: pnpm --filter @tangle-network/tcloud build
+
+      - name: Test tcloud
+        run: pnpm --filter @tangle-network/tcloud test
+
+      - name: Pack release artifact
+        id: package
+        working-directory: packages/tcloud
+        env:
+          PACK_DIR: ${{ runner.temp }}/tcloud-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PACK_DIR"
+          pnpm pack --pack-destination "$PACK_DIR" > "$RUNNER_TEMP/tcloud-pack.log"
+
+          mapfile -t tarballs < <(find "$PACK_DIR" -maxdepth 1 -type f -name '*.tgz' -print)
+          if (( ${#tarballs[@]} != 1 )); then
+            echo "Expected one release tarball, found ${#tarballs[@]}" >&2
+            cat "$RUNNER_TEMP/tcloud-pack.log" >&2
+            exit 1
+          fi
+
+          echo "path=${tarballs[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect packed artifact
+        id: artifact
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          EXPECTED_NAME: ${{ steps.release.outputs.name }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - "$TARBALL_PATH" "$EXPECTED_NAME" "$EXPECTED_VERSION" <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs'
+          import { execFileSync } from 'node:child_process'
+          import { createHash } from 'node:crypto'
+
+          const [tarballPath, expectedName, expectedVersion] = process.argv.slice(2)
+          const manifest = JSON.parse(execFileSync('tar', ['-xOf', tarballPath, 'package/package.json'], { encoding: 'utf8' }))
+          const entries = execFileSync('tar', ['-tzf', tarballPath], { encoding: 'utf8' }).trim().split('\n')
+          const requiredEntries = ['package/package.json', 'package/dist/index.js', 'package/dist/cli.js']
+
+          if (manifest.name !== expectedName || manifest.version !== expectedVersion) {
+            throw new Error(`Packed manifest is ${manifest.name}@${manifest.version}, expected ${expectedName}@${expectedVersion}`)
+          }
+          if (manifest.bin?.tcloud !== 'dist/cli.js') {
+            throw new Error('Packed manifest does not expose dist/cli.js as the tcloud binary')
+          }
+          for (const entry of requiredEntries) {
+            if (!entries.includes(entry)) throw new Error(`Packed artifact is missing ${entry}`)
+          }
+          if (entries.some((entry) => entry.includes('node_modules'))) {
+            throw new Error('Packed artifact contains node_modules')
+          }
+          if (JSON.stringify(manifest).includes('workspace:')) {
+            throw new Error('Packed manifest contains an unresolved workspace dependency')
+          }
+          if (manifest.publishConfig?.registry && !manifest.publishConfig.registry.includes('registry.npmjs.org')) {
+            throw new Error(`Packed manifest targets ${manifest.publishConfig.registry}`)
+          }
+
+          const sha1 = createHash('sha1').update(readFileSync(tarballPath)).digest('hex')
+          appendFileSync(process.env.GITHUB_OUTPUT, `sha1=${sha1}\n`)
+          console.log(`${expectedName}@${expectedVersion} tarball=${tarballPath} sha1=${sha1} entries=${entries.length}`)
+          NODE
+
+      - name: Bundle a clean consumer
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          CONSUMER_DIR: ${{ runner.temp }}/tcloud-consumer
+        run: |
+          set -euo pipefail
+          mkdir -p "$CONSUMER_DIR"
+          npm install --prefix "$CONSUMER_DIR" --ignore-scripts "$TARBALL_PATH"
+
+          node --input-type=module - "$CONSUMER_DIR" "$EXPECTED_VERSION" <<'NODE'
+          import { writeFileSync } from 'node:fs'
+          import { readFile } from 'node:fs/promises'
+          import { join } from 'node:path'
+
+          const [consumerDir, expectedVersion] = process.argv.slice(2)
+          const manifest = JSON.parse(await readFile(
+            join(consumerDir, 'node_modules/@tangle-network/tcloud/package.json'),
+            'utf8',
+          ))
+          if (manifest.version !== expectedVersion) {
+            throw new Error(`Consumer installed ${manifest.version}, expected ${expectedVersion}`)
+          }
+
+          writeFileSync(join(consumerDir, 'entry.mjs'), [
+            "import { TCloudClient } from '@tangle-network/tcloud'",
+            "const client = new TCloudClient({ apiKey: 'consumer-smoke' })",
+            "if (!client) throw new Error('TCloudClient did not initialize')",
+          ].join('\n'))
+          NODE
+
+          pnpm --filter @tangle-network/tcloud exec esbuild \
+            "$CONSUMER_DIR/entry.mjs" \
+            --bundle \
+            --platform=node \
+            --format=esm \
+            --outfile="$CONSUMER_DIR/bundle.mjs"
+          node "$CONSUMER_DIR/bundle.mjs"
+
+      - name: Install trusted-publishing npm
+        run: npm install --global npm@12.0.1 --registry=https://registry.npmjs.org
+
+      - name: Publish and verify npm artifact
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          EXPECTED_NAME: ${{ steps.release.outputs.name }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          EXPECTED_SHA1: ${{ steps.artifact.outputs.sha1 }}
+          REGISTRY: https://registry.npmjs.org
+        run: |
+          set -euo pipefail
+
+          registry_sha1() {
+            REGISTRY="$REGISTRY" EXPECTED_NAME="$EXPECTED_NAME" EXPECTED_VERSION="$EXPECTED_VERSION" node --input-type=module <<'NODE'
+          const registry = process.env.REGISTRY.replace(/\/$/, '')
+          const packageUrl = `${registry}/${encodeURIComponent(process.env.EXPECTED_NAME).replace('%40', '@')}`
+          const response = await fetch(packageUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15_000) })
+
+          if (response.status === 404) process.exit(0)
+          if (!response.ok) throw new Error(`${registry} returned HTTP ${response.status}`)
+
+          const metadata = await response.json()
+          const sha1 = metadata.versions?.[process.env.EXPECTED_VERSION]?.dist?.shasum
+          if (typeof sha1 === 'string') process.stdout.write(sha1)
+          NODE
+          }
+
+          existing_sha1="$(registry_sha1)"
+          if [[ -n "$existing_sha1" ]]; then
+            if [[ "$existing_sha1" != "$EXPECTED_SHA1" ]]; then
+              echo "${EXPECTED_NAME}@${EXPECTED_VERSION} already exists with different bytes" >&2
+              exit 1
+            fi
+            echo "${EXPECTED_NAME}@${EXPECTED_VERSION} already exists with the exact release bytes"
+            exit 0
+          fi
+
+          npm publish "$TARBALL_PATH" \
+            --access public \
+            --tag latest \
+            --provenance \
+            --registry "$REGISTRY"
+
+          for attempt in 1 2 3 4 5 6; do
+            published_sha1="$(registry_sha1)"
+            if [[ "$published_sha1" == "$EXPECTED_SHA1" ]]; then
+              echo "Published and verified ${EXPECTED_NAME}@${EXPECTED_VERSION} sha1=${EXPECTED_SHA1}"
+              exit 0
+            fi
+            if [[ -n "$published_sha1" ]]; then
+              echo "Registry returned different bytes: local=$EXPECTED_SHA1 registry=$published_sha1" >&2
+              exit 1
+            fi
+            if (( attempt < 6 )); then sleep 10; fi
+          done
+
+          echo "${EXPECTED_NAME}@${EXPECTED_VERSION} was not visible at $REGISTRY after six checks" >&2
+          exit 1

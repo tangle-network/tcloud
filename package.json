@@ -2,6 +2,7 @@
   "name": "tcloud-monorepo",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@9.15.9",
   "description": "TypeScript SDK, CLI, agent, and relayer for Tangle AI Cloud",
   "scripts": {
     "build": "pnpm -r build",
@@ -19,6 +20,6 @@
     }
   },
   "devDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.9.3"
   }
 }

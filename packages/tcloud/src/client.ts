@@ -49,6 +49,7 @@ import type {
   UpdateKeyOptions,
 } from './types'
 import { PrivateRouter, type OperatorInfo, type RoutingStrategy } from './private-router'
+import { packageVersion } from './version'
 
 /** Non-enumerable marker set on clients constructed via {@link TCloudClient.rotating}. */
 const ROTATING_MARKER = '__tcloudRotating'
@@ -90,18 +91,10 @@ export interface RotationStats {
 
 const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
 
-/** SDK version surfaced on the X-Tangle-Client header. Kept in source so the
- * CJS/ESM build doesn't need a runtime package.json read — update alongside
- * package.json version bumps. A build-time sync from package.json is a
- * reasonable follow-up, but this single-source-of-truth approach works
- * without bundler/ESM assert-json complexity. */
-const SDK_VERSION = '0.4.0'
-
 /**
  * Route a fetch call through the configured privacy proxy.
  * - direct: standard fetch
  * - relayer: POST to relayer's /relay/proxy or /relay/proxy-stream
- * - socks5: fetch via SOCKS5 proxy agent (requires socks-proxy-agent peer dep)
  */
 async function proxiedFetch(
   privacy: PrivacyConfig | undefined,
@@ -113,46 +106,29 @@ async function proxiedFetch(
     return fetch(url, init)
   }
 
-  if (privacy.mode === 'relayer') {
-    if (!privacy.relayerUrl) {
-      throw new Error('relayerUrl is required when privacy mode is "relayer"')
-    }
-    const proxyPath = streaming ? '/relay/proxy-stream' : '/relay/proxy'
-    // Extract headers as plain object for the relay payload
-    const hdrs: Record<string, string> = {}
-    if (init.headers) {
-      const entries = init.headers instanceof Headers
-        ? Array.from(init.headers.entries())
-        : Object.entries(init.headers as Record<string, string>)
-      for (const [k, v] of entries) hdrs[k] = v
-    }
-    return fetch(`${privacy.relayerUrl}${proxyPath}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        target: url,
-        body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body,
-        headers: hdrs,
-      }),
-    })
+  if (privacy.mode !== 'relayer') {
+    throw new Error(`Unsupported privacy mode: ${String(privacy.mode)}`)
   }
-
-  if (privacy.mode === 'socks5') {
-    if (!privacy.socksProxy) {
-      throw new Error('socksProxy is required when privacy mode is "socks5"')
-    }
-    // socks-proxy-agent is an optional peer dependency — install it to use socks5 mode
-    // @ts-ignore — optional peer dependency
-    const { SocksProxyAgent } = await import('socks-proxy-agent') as { SocksProxyAgent: new (url: string) => unknown }
-    const agent = new SocksProxyAgent(privacy.socksProxy)
-    return fetch(url, {
-      ...init,
-      // @ts-expect-error agent is supported by Node's undici but not in the standard RequestInit type
-      agent,
-    })
+  if (!privacy.relayerUrl) {
+    throw new Error('relayerUrl is required when privacy mode is "relayer"')
   }
-
-  return fetch(url, init)
+  const proxyPath = streaming ? '/relay/proxy-stream' : '/relay/proxy'
+  const headers: Record<string, string> = {}
+  if (init.headers) {
+    const entries = init.headers instanceof Headers
+      ? Array.from(init.headers.entries())
+      : Object.entries(init.headers as Record<string, string>)
+    for (const [key, value] of entries) headers[key] = value
+  }
+  return fetch(`${privacy.relayerUrl}${proxyPath}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      target: url,
+      body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body,
+      headers,
+    }),
+  })
 }
 
 const DEFAULT_RETRY: Required<RetryConfig> = {
@@ -346,7 +322,7 @@ export class TCloudClient {
 
     this.headers = {
       'Content-Type': 'application/json',
-      'X-Tangle-Client': `tcloud-sdk/${SDK_VERSION}`,
+      'X-Tangle-Client': `tcloud-sdk/${packageVersion()}`,
     }
 
     if (this.apiKey) {
