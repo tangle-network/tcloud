@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.tag || github.ref }}
-          fetch-depth: 1
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
@@ -61,6 +61,10 @@ jobs:
           fi
           if [[ "$tag_sha" != "$checkout_sha" ]]; then
             echo "Tag $RELEASE_TAG points to $tag_sha, checked out $checkout_sha" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$checkout_sha" origin/main; then
+            echo "Release commit $checkout_sha is not on origin/main" >&2
             exit 1
           fi
 
@@ -201,6 +205,9 @@ jobs:
           writeFileSync(join(consumerDir, 'pnpm-workspace.yaml'), [
             'packages:',
             "  - '.'",
+            '',
+            'autoInstallPeers: false',
+            'strictPeerDependencies: true',
             '',
             'minimumReleaseAge: 4320',
             'minimumReleaseAgeStrict: true',
