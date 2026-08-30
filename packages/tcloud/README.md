@@ -397,7 +397,7 @@ tcloud wallet generate -l "research"      # With label
 tcloud wallet list                        # List wallets
 ```
 
-Wallets use BIP-39 mnemonics with BIP-44 derivation. Private keys are encrypted at rest with AES-256-GCM (PBKDF2 210K iterations).
+The CLI generates random ephemeral keys and stores them in `~/.tcloud/wallets.json` with owner-only permissions. Treat this file as sensitive.
 
 ## Configuration
 
