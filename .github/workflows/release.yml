@@ -152,7 +152,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$CONSUMER_DIR"
-          npm install --prefix "$CONSUMER_DIR" --ignore-scripts "$TARBALL_PATH"
+          npm install --prefix "$CONSUMER_DIR" --ignore-scripts \
+            "$TARBALL_PATH" \
+            esbuild@0.28.2
 
           node --input-type=module - "$CONSUMER_DIR" "$EXPECTED_VERSION" <<'NODE'
           import { writeFileSync } from 'node:fs'
@@ -175,7 +177,7 @@ jobs:
           ].join('\n'))
           NODE
 
-          pnpm --filter @tangle-network/tcloud exec esbuild \
+          "$CONSUMER_DIR/node_modules/.bin/esbuild" \
             "$CONSUMER_DIR/entry.mjs" \
             --bundle \
             --platform=node \
