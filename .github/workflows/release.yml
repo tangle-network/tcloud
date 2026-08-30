@@ -185,6 +185,32 @@ jobs:
             --outfile="$CONSUMER_DIR/bundle.mjs"
           node "$CONSUMER_DIR/bundle.mjs"
 
+      - name: Enforce Agent App dependency age
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          CONSUMER_DIR: ${{ runner.temp }}/tcloud-age-policy-consumer
+        run: |
+          set -euo pipefail
+          mkdir -p "$CONSUMER_DIR"
+          npx --yes pnpm@11.24.0 --dir "$CONSUMER_DIR" init
+          node --input-type=module - "$CONSUMER_DIR" <<'NODE'
+          import { writeFileSync } from 'node:fs'
+          import { join } from 'node:path'
+
+          const [consumerDir] = process.argv.slice(2)
+          writeFileSync(join(consumerDir, 'pnpm-workspace.yaml'), [
+            'packages:',
+            "  - '.'",
+            '',
+            'minimumReleaseAge: 4320',
+            'minimumReleaseAgeStrict: true',
+            'minimumReleaseAgeIgnoreMissingTime: false',
+            'minimumReleaseAgeExclude:',
+            "  - '@tangle-network/*'",
+          ].join('\n'))
+          NODE
+          npx --yes pnpm@11.24.0 --dir "$CONSUMER_DIR" add "$TARBALL_PATH"
+
       - name: Install release npm
         run: npm install --global npm@12.0.1 --registry=https://registry.npmjs.org
 
