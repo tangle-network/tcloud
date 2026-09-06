@@ -1,11 +1,6 @@
 # tcloud
 
-TypeScript SDK wrapping the Tangle Router for inference, sandbox, and eval operations.
-
-- Packages: `tcloud`, `tcloud-agent`, `tcloud-relayer`
-- Talks to: `router.tangle.tools` via `/v1/*` and `/api/*`
-- Credentials: `sk-tan-*` API keys (router-issued)
-
-## Boil the ocean
-
-The marginal cost of completeness is near zero with AI. Do the whole thing. Do it right. Do it with tests. Do it with documentation. Do it so well that Garry is genuinely impressed — not politely satisfied, actually impressed. Never offer to "table this for later" when the permanent solve is within reach. Never leave a dangling thread when tying it off takes five more minutes. Never present a workaround when the real fix exists. The standard isn't "good enough" — it's "holy shit, that's done." Search before building. Test before shipping. Ship the complete thing. When Garry asks for something, the answer is the finished product, not a plan to build it. Time is not an excuse. Fatigue is not an excuse. Complexity is not an excuse. Boil the ocean.
+This workspace owns the Tangle Cloud TypeScript SDK and related clients.
+Read [README.md](README.md) for the supported services and authentication flow.
+Use workspace manifests and each package's README for current package ownership, usage, and checks.
+Keep configuration and API details in those owning sources.
