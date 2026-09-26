@@ -14,8 +14,6 @@ jobs:
         with:
           ref: pro/tangle-agent-v1-video-routes
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
-        with:
-          version: '10.28.0'
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '22'
@@ -51,6 +49,6 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: tcloud-v1-sdk-check
+          name: tcloud-v1-sdk-check-${{ github.run_attempt }}
           path: /tmp/tcloud-v1/
           retention-days: 3
