@@ -40,7 +40,6 @@ interface SessionState {
   level: Level
   apiKey: string | null
   wallet: WalletData | null
-  nonce: bigint
   totalRequests: number
   operatorsRotated: number
   currentOperator: string | null
@@ -72,27 +71,6 @@ function loadWallet(): WalletData | null {
 const SHIELDED_CHAIN_ID = parseInt(process.env.SHIELDED_CHAIN_ID || '3799')
 const SHIELDED_CREDITS_ADDRESS = (process.env.SHIELDED_CREDITS_ADDRESS || '0x0000000000000000000000000000000000000000') as Hex
 
-async function buildSpendAuthHeader(wallet: WalletData, nonce: bigint): Promise<string> {
-  const expiry = BigInt(Math.floor(Date.now() / 1000) + 300)
-  const shieldedWallet: ShieldedWallet = {
-    privateKey: wallet.spendingPrivateKey as Hex,
-    address: wallet.spendingAddress,
-    commitment: wallet.commitment as Hex,
-    salt: wallet.salt as Hex,
-  }
-  const auth = await signSpendAuth(shieldedWallet, {
-    serviceId: 1n,
-    jobIndex: 0,
-    amount: 1_000_000n, // $1 authorization in tsUSD base units
-    operator: '0x0000000000000000000000000000000000000000' as Hex, // gateway selects
-    nonce,
-    expiry,
-    chainId: SHIELDED_CHAIN_ID,
-    creditsAddress: SHIELDED_CREDITS_ADDRESS,
-  })
-  return JSON.stringify(auth)
-}
-
 export default function tcloudExtension(pi: ExtensionAPI) {
   const sessions = new Map<string, SessionState>()
   const getKey = (ctx: ExtensionContext) => ctx.sessionManager.getSessionId()
@@ -107,7 +85,6 @@ export default function tcloudExtension(pi: ExtensionAPI) {
         level,
         apiKey: config.apiKey || null,
         wallet,
-        nonce: 0n,
         totalRequests: 0,
         operatorsRotated: 0,
         currentOperator: null,
@@ -116,41 +93,6 @@ export default function tcloudExtension(pi: ExtensionAPI) {
     return sessions.get(key)!
   }
 
-  // ── Make an inference request at the detected privacy level ──
-
-  async function inference(session: SessionState, messages: any[], model: string): Promise<string> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-
-    if (session.level === 'shielded' && session.wallet) {
-      // x402: sign SpendAuth, no API key, operator can't identify us
-      headers['X-Payment-Signature'] = await buildSpendAuthHeader(session.wallet, session.nonce++)
-    } else if (session.level === 'authenticated' && session.apiKey) {
-      headers['Authorization'] = `Bearer ${session.apiKey}`
-    }
-    // anonymous: no headers, rate-limited
-
-    const res = await fetch(`${TCLOUD_API_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ model, messages, max_tokens: 4096, stream: false }),
-    })
-
-    if (res.status === 402) throw new Error('Credits exhausted. Run: tcloud credits fund')
-    if (res.status === 429) throw new Error('Rate limited. Run: tcloud auth login')
-    if (!res.ok) throw new Error(`tcloud ${res.status}: ${await res.text().then(t => t.slice(0, 200))}`)
-
-    const data = await res.json() as any
-    session.totalRequests++
-
-    // Track operator rotation from response headers
-    const routedOperator = res.headers.get('x-tangle-routed-operator')
-    if (routedOperator && routedOperator !== session.currentOperator) {
-      session.operatorsRotated++
-      session.currentOperator = routedOperator
-    }
-
-    return data.choices?.[0]?.message?.content || ''
-  }
 
   // ── Lifecycle ──
 
@@ -273,7 +215,6 @@ export default function tcloudExtension(pi: ExtensionAPI) {
 
         session.wallet = wallet
         session.level = 'shielded'
-        session.nonce = 0n
         updateWidget(ctx)
 
         return {
