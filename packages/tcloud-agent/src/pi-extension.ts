@@ -119,37 +119,40 @@ export default function tcloudExtension(pi: ExtensionAPI) {
   // ── Make an inference request at the detected privacy level ──
 
   async function inference(session: SessionState, messages: any[], model: string): Promise<string> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-
-    if (session.level === 'shielded' && session.wallet) {
-      // x402: sign SpendAuth, no API key, operator can't identify us
-      headers['X-Payment-Signature'] = await buildSpendAuthHeader(session.wallet, session.nonce++)
-    } else if (session.level === 'authenticated' && session.apiKey) {
-      headers['Authorization'] = `Bearer ${session.apiKey}`
-    }
-    // anonymous: no headers, rate-limited
-
-    const res = await fetch(`${TCLOUD_API_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ model, messages, max_tokens: 4096, stream: false }),
+    const client = new TCloudClient({
+      baseURL: TCLOUD_API_URL,
+      apiKey: session.level === 'authenticated' ? session.apiKey ?? undefined : undefined,
+      model,
     })
-
-    if (res.status === 402) throw new Error('Credits exhausted. Run: tcloud credits fund')
-    if (res.status === 429) throw new Error('Rate limited. Run: tcloud auth login')
-    if (!res.ok) throw new Error(`tcloud ${res.status}: ${await res.text().then(t => t.slice(0, 200))}`)
-
-    const data = await res.json() as any
-    session.totalRequests++
-
-    // Track operator rotation from response headers
-    const routedOperator = res.headers.get('x-tangle-routed-operator')
-    if (routedOperator && routedOperator !== session.currentOperator) {
-      session.operatorsRotated++
-      session.currentOperator = routedOperator
+    if (session.level === 'shielded' && session.wallet) {
+      client.setSpendAuthSigner(async () => {
+        const wallet: ShieldedWallet = {
+          privateKey: session.wallet!.spendingPrivateKey as Hex,
+          address: session.wallet!.spendingAddress,
+          commitment: session.wallet!.commitment as Hex,
+          salt: session.wallet!.salt as Hex,
+        }
+        return signSpendAuth(wallet, {
+          serviceId: 1n,
+          jobIndex: 0,
+          amount: 1_000_000n,
+          operator: '0x0000000000000000000000000000000000000000' as Hex,
+          nonce: session.nonce++,
+          expiry: BigInt(Math.floor(Date.now() / 1000) + 300),
+          chainId: SHIELDED_CHAIN_ID,
+          creditsAddress: SHIELDED_CREDITS_ADDRESS,
+        })
+      })
     }
-
-    return data.choices?.[0]?.message?.content || ''
+    try {
+      const response = await client.chat({ model, messages, maxTokens: 4096 })
+      session.totalRequests++
+      return response.choices?.[0]?.message?.content || ''
+    } catch (error: any) {
+      if (error?.status === 402) throw new Error('Credits exhausted. Run: tcloud credits fund')
+      if (error?.status === 429) throw new Error('Rate limited. Run: tcloud auth login')
+      throw error
+    }
   }
 
   // ── Lifecycle ──
