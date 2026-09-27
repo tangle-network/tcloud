@@ -247,7 +247,7 @@ jobs:
           if (!response.ok) throw new Error(`${registry} returned HTTP ${response.status}`)
 
           const metadata = await response.json()
-          const sha1 = metadata.versions?.[process.env.EXPECTED_NAME]?.dist?.shasum
+          const sha1 = metadata.versions?.[process.env.EXPECTED_VERSION]?.dist?.shasum
           if (typeof sha1 === 'string') process.stdout.write(sha1)
           NODE
           }
