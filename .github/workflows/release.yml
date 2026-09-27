@@ -87,7 +87,7 @@ jobs:
         run: node scripts/check-cohort-ranges.mjs
 
       - name: Build tcloud
-        run: pnpm --filter @tangle-network/tcloud build
+        run: pnpm --filter '@tangle-network/tcloud...' build
 
       - name: Test tcloud
         run: pnpm --filter @tangle-network/tcloud test
@@ -247,7 +247,7 @@ jobs:
           if (!response.ok) throw new Error(`${registry} returned HTTP ${response.status}`)
 
           const metadata = await response.json()
-          const sha1 = metadata.versions?.[process.env.EXPECTED_VERSION]?.dist?.shasum
+          const sha1 = metadata.versions?.[process.env.EXPECTED_NAME]?.dist?.shasum
           if (typeof sha1 === 'string') process.stdout.write(sha1)
           NODE
           }
