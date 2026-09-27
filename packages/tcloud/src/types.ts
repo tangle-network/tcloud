@@ -144,6 +144,8 @@ export type SearchProvider = 'perplexity' | 'exa' | 'you' | 'parallel' | 'tavily
 export type SearchRecency = 'day' | 'week' | 'month' | 'year'
 
 export interface SearchOptions {
+  /** Cancel transport, response-body reads and retry waits. Never serialized. */
+  signal?: AbortSignal
   query: string
   provider?: SearchProvider
   /** Alias accepted by the Router for provider-compatible clients. */
@@ -509,6 +511,8 @@ export interface SandboxChatOptions {
 }
 
 export interface ChatOptions {
+  /** Cancel transport, response-body reads and retry waits. Never serialized. */
+  signal?: AbortSignal
   /** Model to use */
   model?: string
   /** Messages */
@@ -562,6 +566,8 @@ export interface ChatOptions {
 }
 
 export interface ChatCompletion {
+  /** SDK receipt for this response only. Absent when cost is only guessed. */
+  tangle?: { costUsd: number; costSource: 'receipt' | 'rates' }
   id: string
   object: string
   created: number
@@ -575,6 +581,8 @@ export interface ChatCompletion {
     prompt_tokens: number
     completion_tokens: number
     total_tokens: number
+    billed_cost?: number
+    cost?: number
   }
 }
 
