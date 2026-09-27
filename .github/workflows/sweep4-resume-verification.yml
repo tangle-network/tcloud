@@ -1,0 +1,92 @@
+name: Sweep 4 delivery verification
+on:
+  push:
+    branches: [sweep4/verify-delivery-resume]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 1ed385a057291be2f2d11679409c0a9d094524bf
+          path: sdk
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: tangle-network/agent-knowledge
+          ref: d98263b01c3e7f9cc2dc44c5eb7a266122924773
+          path: knowledge
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check real public registry and Hub exports
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence hub-package packed
+          node --input-type=module <<'NODE' | tee evidence/registry.jsonl
+          for (const name of ['@tangle-network/tcloud', '@tangle-network/hub-sdk', '@tangle-network/sandbox']) {
+            const res = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}`);
+            if (!res.ok) throw new Error(`${name}: ${res.status}`);
+            const pkg = await res.json();
+            const version = pkg['dist-tags'].latest;
+            console.log(JSON.stringify({ name, version, dist: pkg.versions[version].dist,
+              sdk060Published: name === '@tangle-network/tcloud' ? Boolean(pkg.versions['0.6.0']) : undefined }));
+          }
+          NODE
+          npm pack @tangle-network/hub-sdk --pack-destination hub-package --json > evidence/hub-pack.json
+          tar -xzf hub-package/*.tgz -C hub-package
+          node --input-type=module <<'NODE' | tee evidence/hub-contract.txt
+          import fs from 'node:fs';
+          const root = 'hub-package/package';
+          const pkg = JSON.parse(fs.readFileSync(`${root}/package.json`, 'utf8'));
+          console.log(JSON.stringify({ name: pkg.name, version: pkg.version, exports: pkg.exports }));
+          const text = fs.readFileSync(`${root}/dist/index.d.ts`, 'utf8');
+          const start = text.indexOf('declare class HubConnectionsClient');
+          if (start < 0) throw new Error('Inspect the changed Hub declaration layout before concluding anything');
+          const end = text.indexOf('\ndeclare class ', start + 1);
+          console.log(text.slice(start, end < 0 ? start + 15000 : end));
+          console.log('CREDENTIAL/Vault export names:', [...new Set(text.match(/\b\w*(?:Credential|Vault|Secret)\w*\b/g) ?? [])].join(', '));
+          NODE
+      - name: SDK frozen registry install and build
+        working-directory: sdk
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes pnpm@9.15.9 install --frozen-lockfile 2>&1 | tee ../evidence/sdk-install.log
+          npx --yes pnpm@9.15.9 -r build 2>&1 | tee ../evidence/sdk-build.log
+          node scripts/prove-sdk-transport.mjs | tee ../evidence/sdk-http.jsonl
+          npx --yes pnpm@9.15.9 --dir packages/tcloud pack --pack-destination "$GITHUB_WORKSPACE/packed"
+          sha256sum ../packed/*.tgz | tee ../evidence/packed.sha256
+      - name: Build exact Knowledge candidate without claiming an npm release
+        working-directory: knowledge
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE' | tee ../evidence/candidate.json
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import crypto from 'node:crypto';
+          const artifact = path.resolve('../packed/tangle-network-tcloud-0.6.0.tgz');
+          const integrity = `sha512-${crypto.createHash('sha512').update(fs.readFileSync(artifact)).digest('base64')}`;
+          console.log(JSON.stringify({ artifact: path.basename(artifact), integrity, publication: false }));
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          pkg.pnpm ??= {};
+          pkg.pnpm.overrides ??= {};
+          pkg.pnpm.overrides['@tangle-network/tcloud'] = `file:${artifact}`;
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          NODE
+          npx --yes pnpm@10.34.5 install --no-frozen-lockfile 2>&1 | tee ../evidence/knowledge-candidate-install.log
+          npx --yes pnpm@10.34.5 run typecheck:src 2>&1 | tee ../evidence/knowledge-typecheck.log
+          npx --yes pnpm@10.34.5 build 2>&1 | tee ../evidence/knowledge-build.log
+          node scripts/check-api-surface.mjs | tee ../evidence/knowledge-api.log
+          node scripts/prove-research-transport.mjs | tee ../evidence/knowledge-http.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sweep4-delivery-verification
+          path: evidence/
