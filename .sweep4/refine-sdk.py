@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 p = Path('packages/tcloud/src/client.ts')
 s = p.read_text()
 a = '    const completion: ChatCompletion = await res.json()\n    this.trackCost(completion, res)'
@@ -11,3 +12,4 @@ a = 'run: pnpm --filter @tangle-network/tcloud build'
 b = "run: pnpm --filter '@tangle-network/tcloud...' build"
 assert s.count(a) == 1 or s.count(b) == 1
 p.write_text(s.replace(a, b))
+subprocess.run(['git', 'add', '.github/workflows/release.yml'], check=True)
