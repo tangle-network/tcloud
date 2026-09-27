@@ -2,6 +2,9 @@ name: Sweep 4 SDK candidate build
 on:
   push:
     branches: [sweep4/registry-preflight-20260926]
+concurrency:
+  group: sweep4-sdk-candidate
+  cancel-in-progress: true
 permissions:
   contents: write
 jobs:
@@ -10,6 +13,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
