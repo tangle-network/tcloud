@@ -1097,7 +1097,7 @@ export class TCloudClient {
 
   /** Generate video */
   async videoGenerate(options: VideoGenerateOptions): Promise<VideoResponse> {
-    return this._request(`${this.baseURL}/video/generate`, {
+    return this._request(`${this.baseURL}/videos`, {
       method: 'POST',
       body: JSON.stringify(options),
     })
@@ -1105,7 +1105,7 @@ export class TCloudClient {
 
   /** Get video generation status */
   async videoStatus(id: string): Promise<VideoResponse> {
-    return this._fetch(`${this.baseURL}/video/${encodeURIComponent(id)}`)
+    return this._fetch(`${this.baseURL}/videos/${encodeURIComponent(id)}`)
   }
 
   /** Generate an avatar video (lip-synced talking head from audio + face image).

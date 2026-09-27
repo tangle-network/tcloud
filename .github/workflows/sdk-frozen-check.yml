@@ -1,0 +1,24 @@
+name: SDK frozen workspace install
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24'
+      - name: Frozen install of all workspace importers
+        run: |
+          pnpm install --frozen-lockfile
+          git diff --exit-code -- pnpm-lock.yaml
+      - name: Build, test and pack the published SDK
+        run: |
+          pnpm --filter '@tangle-network/tcloud...' run build
+          pnpm --filter @tangle-network/tcloud test
+          pnpm --dir packages/tcloud pack --pack-destination "$RUNNER_TEMP"

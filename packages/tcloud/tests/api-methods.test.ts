@@ -371,7 +371,7 @@ describe('video generation', () => {
       generate_audio: true,
     })
 
-    expect(fn.mock.calls[0][0]).toBe('https://router.tangle.tools/v1/video/generate')
+    expect(fn.mock.calls[0][0]).toBe('https://router.tangle.tools/v1/videos')
     const body = JSON.parse(fn.mock.calls[0][1].body)
     expect(body).toMatchObject({
       provider: 'kling',
@@ -390,7 +390,7 @@ describe('video generation', () => {
     globalThis.fetch = fn
     const client = new TCloudClient({ apiKey: 'sk-tan-test' })
     await client.videoStatus('orv_job')
-    expect(fn.mock.calls[0][0]).toBe('https://router.tangle.tools/v1/video/orv_job')
+    expect(fn.mock.calls[0][0]).toBe('https://router.tangle.tools/v1/videos/orv_job')
   })
 })
 
