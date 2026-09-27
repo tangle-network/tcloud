@@ -23,10 +23,13 @@ jobs:
         run: |
           git restore --source=8531d2eb2e7af89f9af30d2443385388a73a5e23 -- packages/tcloud/src/client.ts packages/tcloud/src/types.ts packages/tcloud/package.json packages/tcloud-agent/package.json pnpm-lock.yaml
           python3 .sweep4/patch-tcloud.py
+          python3 .sweep4/refine-sdk.py
       - name: Registry install
         run: pnpm install --no-frozen-lockfile --ignore-scripts
       - name: Real workspace build
         run: pnpm -r build
+      - name: Real socket proof
+        run: node scripts/prove-sdk-transport.mjs
       - name: Check package ranges and changed source
         run: |
           node scripts/check-cohort-ranges.mjs
