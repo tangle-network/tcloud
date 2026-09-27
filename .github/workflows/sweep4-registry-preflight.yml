@@ -1,0 +1,32 @@
+name: Sweep 4 registry preflight
+on:
+  push:
+    branches: [sweep4/registry-preflight-20260926]
+permissions:
+  contents: read
+jobs:
+  registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read published package metadata
+        run: |
+          node --input-type=module <<'NODE'
+          for (const name of ['tcloud', 'hub-sdk', 'sandbox', 'agent-runtime', 'agent-knowledge']) {
+            const url = 'https://registry.npmjs.org/@tangle-network/' + name + '/latest';
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+            const p = await response.json();
+            console.log(JSON.stringify({name:p.name,version:p.version,dependencies:p.dependencies,peerDependencies:p.peerDependencies,peerDependenciesMeta:p.peerDependenciesMeta,exports:p.exports,dist:p.dist}));
+          }
+          NODE
+      - name: Inspect published SDK source contracts
+        run: |
+          mkdir -p sdk && cd sdk
+          npm pack @tangle-network/tcloud@latest --ignore-scripts --silent
+          tar -xf tangle-network-tcloud-*.tgz
+          grep -nE 'signal|fetch:|fetch\?|chat\(|search\(|RetryConfig|totalSpent|TCloudError|onResponse' package/dist/client*.d.* package/dist/index.d.ts 2>/dev/null || true
+          cd .. && mkdir -p hub && cd hub
+          npm pack @tangle-network/hub-sdk@latest --ignore-scripts --silent
+          tar -xf tangle-network-hub-sdk-*.tgz
+          grep -nE 'class HubConnectionsClient|class Hub.*(Secret|Credential|Vault)|readSecret|resolveCredential|decrypt|connectApiKey' package/dist/*.d.* || true
