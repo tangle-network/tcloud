@@ -1,0 +1,40 @@
+name: Sweep 4 SDK candidate build
+on:
+  push:
+    branches: [sweep4/registry-preflight-20260926]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@9.15.9
+      - name: Apply reviewed changes to pinned source
+        run: |
+          git restore --source=8531d2eb2e7af89f9af30d2443385388a73a5e23 -- packages/tcloud/src/client.ts packages/tcloud/src/types.ts packages/tcloud/package.json packages/tcloud-agent/package.json pnpm-lock.yaml
+          python3 .sweep4/patch-tcloud.py
+      - name: Registry install
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
+      - name: Real workspace build
+        run: pnpm -r build
+      - name: Check package ranges and changed source
+        run: |
+          node scripts/check-cohort-ranges.mjs
+          git diff --check
+          git diff --stat
+          pnpm list -r @tangle-network/sandbox @tangle-network/agent-interface @tangle-network/agent-core zod
+      - name: Retain successful candidate on isolated branch
+        run: |
+          git config user.name 'tangletools'
+          git config user.email 'tangletools@users.noreply.github.com'
+          git add packages/tcloud/src/client.ts packages/tcloud/src/types.ts packages/tcloud/package.json packages/tcloud-agent/package.json packages/tcloud/CHANGELOG.md pnpm-lock.yaml
+          if ! git diff --cached --quiet; then
+            git commit -m 'build: retain registry-resolved cancellable SDK candidate'
+            git push origin HEAD:sweep4/registry-preflight-20260926
+          fi
+          git rev-parse HEAD
