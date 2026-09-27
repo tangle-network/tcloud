@@ -87,7 +87,7 @@ jobs:
         run: node scripts/check-cohort-ranges.mjs
 
       - name: Build tcloud
-        run: pnpm --filter @tangle-network/tcloud build
+        run: pnpm --filter '@tangle-network/tcloud...' build
 
       - name: Test tcloud
         run: pnpm --filter @tangle-network/tcloud test

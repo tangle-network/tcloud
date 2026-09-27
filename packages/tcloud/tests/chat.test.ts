@@ -127,6 +127,24 @@ describe('chat()', () => {
     expect(client.usage.requestCount).toBe(1)
   })
 
+  it('meters a billed header without token usage and blocks the next paid request', async () => {
+    const { usage: _usage, ...body } = COMPLETION
+    const fn = mockFetchJson(body, { 'x-tangle-cost-usd': '0.033' })
+    globalThis.fetch = fn
+    const reached = vi.fn()
+    const client = new TCloudClient({
+      apiKey: 'sk-tan-test',
+      limits: { maxTotalSpend: 0.03, maxCostPerRequest: 0.02, onLimitReached: reached },
+    })
+    const result = await client.chat({ messages: [{ role: 'user', content: 'hi' }] })
+    expect(result.tangle).toEqual({ costUsd: 0.033, costSource: 'receipt' })
+    expect(client.usage.totalSpent).toBe(0.033)
+    expect(reached).toHaveBeenCalledWith({ type: 'cost', current: 0.033, limit: 0.02 })
+    await expect(client.chat({ messages: [{ role: 'user', content: 'again' }] }))
+      .rejects.toMatchObject({ status: 429 })
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
   it('passes tools and toolChoice', async () => {
     globalThis.fetch = mockFetchJson(COMPLETION)
     const client = new TCloudClient({ apiKey: 'sk-tan-test' })

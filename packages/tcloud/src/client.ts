@@ -123,12 +123,39 @@ async function proxiedFetch(
   return fetch(`${privacy.relayerUrl}${proxyPath}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    signal: init.signal,
     body: JSON.stringify({
       target: url,
       body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body,
       headers,
     }),
   })
+}
+
+/** A retry wait owned by the SDK, cancellable without leaving a timer behind. */
+function retryDelay(ms: number, signal?: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+      reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', abort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) abort()
+  })
+}
+
+/** Absent, malformed, negative and infinite amounts are not a zero-cost receipt. */
+function nonnegativeAmount(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === '') return undefined
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined
+  if (typeof value === 'string' && value.trim() === '') return undefined
+  const amount = Number(value)
+  return Number.isFinite(amount) && amount >= 0 ? amount : undefined
 }
 
 const DEFAULT_RETRY: Required<RetryConfig> = {
@@ -420,23 +447,36 @@ export class TCloudClient {
   /** Track cost after a response, using actual pricing from response headers when available */
   private trackCost(completion: ChatCompletion, res?: Response) {
     this._requestCount++
-    if (completion.usage) {
-      let estimatedCost: number
-      const inputPrice = res ? parseFloat(res.headers.get('x-tangle-price-input') || '0') : 0
-      const outputPrice = res ? parseFloat(res.headers.get('x-tangle-price-output') || '0') : 0
+    const usage = completion.usage
+    const billed = nonnegativeAmount(res?.headers.get('x-tangle-cost-usd'))
+      ?? nonnegativeAmount(usage?.billed_cost)
+      ?? nonnegativeAmount(usage?.cost)
+    let estimatedCost: number
 
-      if (inputPrice > 0 || outputPrice > 0) {
-        estimatedCost = (completion.usage.prompt_tokens || 0) * inputPrice
-          + (completion.usage.completion_tokens || 0) * outputPrice
+    if (billed !== undefined) {
+      estimatedCost = billed
+      completion.tangle = { costUsd: billed, costSource: 'receipt' }
+    } else if (usage) {
+      const inputPrice = nonnegativeAmount(res?.headers.get('x-tangle-price-input'))
+      const outputPrice = nonnegativeAmount(res?.headers.get('x-tangle-price-output'))
+      const inputTokens = nonnegativeAmount(usage.prompt_tokens)
+      const outputTokens = nonnegativeAmount(usage.completion_tokens)
+
+      if (inputPrice !== undefined && outputPrice !== undefined
+        && inputTokens !== undefined && outputTokens !== undefined) {
+        estimatedCost = inputTokens * inputPrice + outputTokens * outputPrice
+        completion.tangle = { costUsd: estimatedCost, costSource: 'rates' }
       } else {
-        const tokens = completion.usage.total_tokens || 0
+        const tokens = usage.total_tokens || 0
         estimatedCost = tokens * 0.000001 // $1/M tokens fallback
       }
-      this._totalSpent += estimatedCost
+    } else {
+      return
+    }
+    this._totalSpent += estimatedCost
 
-      if (this.limits?.maxCostPerRequest && estimatedCost > this.limits.maxCostPerRequest) {
-        this.limits.onLimitReached?.({ type: 'cost', current: estimatedCost, limit: this.limits.maxCostPerRequest })
-      }
+    if (this.limits?.maxCostPerRequest && estimatedCost > this.limits.maxCostPerRequest) {
+      this.limits.onLimitReached?.({ type: 'cost', current: estimatedCost, limit: this.limits.maxCostPerRequest })
     }
   }
 
@@ -449,6 +489,7 @@ export class TCloudClient {
     const maxAttempts = retry ? retry.maxRetries + 1 : 1
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      init.signal?.throwIfAborted()
       const controller = new AbortController()
       let timer: ReturnType<typeof setTimeout> | undefined
       if (this.timeoutMs > 0 && !streaming) {
@@ -458,7 +499,9 @@ export class TCloudClient {
       try {
         const res = await proxiedFetch(this.privacy, url, {
           ...init,
-          signal: controller.signal,
+          signal: init.signal
+            ? AbortSignal.any([init.signal, controller.signal])
+            : controller.signal,
         }, streaming)
 
         if (res.ok) return res
@@ -470,7 +513,8 @@ export class TCloudClient {
             retry.maxBackoffMs,
           )
           const jitter = backoff * 0.5 * Math.random()
-          await new Promise(r => setTimeout(r, backoff + jitter))
+          await res.body?.cancel().catch(() => {})
+          await retryDelay(backoff + jitter, init.signal)
           continue
         }
 
@@ -478,6 +522,8 @@ export class TCloudClient {
         const err = await res.json().catch(() => ({ error: res.statusText }))
         throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
       } catch (e: any) {
+        // Caller cancellation is not a timeout and must never start another attempt.
+        init.signal?.throwIfAborted()
         if (e instanceof TCloudError) throw e
         // Timeout and network errors are retryable
         if (retry && attempt < retry.maxRetries) {
@@ -485,7 +531,7 @@ export class TCloudClient {
             retry.initialBackoffMs * Math.pow(retry.multiplier, attempt),
             retry.maxBackoffMs,
           )
-          await new Promise(r => setTimeout(r, backoff))
+          await retryDelay(backoff, init.signal)
           continue
         }
         if (e?.name === 'AbortError') {
@@ -626,6 +672,7 @@ export class TCloudClient {
 
   /** Chat completion (non-streaming) */
   async chat(options: ChatOptions): Promise<ChatCompletion> {
+    options.signal?.throwIfAborted()
     this.checkLimits()
     const { headers, baseURL } = await this._prepareChatRequest(
       this._effectiveModel(options),
@@ -636,9 +683,12 @@ export class TCloudClient {
       method: 'POST',
       headers,
       body: this._chatBody(options, false),
+      signal: options.signal,
     }, false)
 
     const completion: ChatCompletion = await res.json()
+    // Only this SDK may mark a per-response receipt. Never trust an upstream extension.
+    delete completion.tangle
     this.trackCost(completion, res)
     return completion
   }
@@ -656,6 +706,7 @@ export class TCloudClient {
       method: 'POST',
       headers,
       body: this._chatBody(options, true),
+      signal: options.signal,
     }, true)
 
     const reader = res.body!.getReader()
@@ -983,6 +1034,7 @@ export class TCloudClient {
   async search(options: SearchOptions): Promise<SearchResponse> {
     return this._request(`${this.baseURL}/search`, {
       method: 'POST',
+      signal: options.signal,
       body: JSON.stringify({
         query: options.query,
         provider: options.provider,
