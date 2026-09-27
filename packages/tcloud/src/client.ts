@@ -683,6 +683,8 @@ export class TCloudClient {
     }, false)
 
     const completion: ChatCompletion = await res.json()
+    // Only this SDK may mark a per-response receipt. Never trust an upstream extension.
+    delete completion.tangle
     this.trackCost(completion, res)
     return completion
   }
