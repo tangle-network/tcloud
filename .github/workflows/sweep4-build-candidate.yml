@@ -25,7 +25,9 @@ jobs:
           python3 .sweep4/patch-tcloud.py
           python3 .sweep4/refine-sdk.py
       - name: Registry install
-        run: pnpm install --no-frozen-lockfile --ignore-scripts
+        run: |
+          pnpm install --no-frozen-lockfile --ignore-scripts
+          pnpm install --frozen-lockfile
       - name: Real workspace build
         run: pnpm -r build
       - name: Real socket proof
@@ -36,6 +38,22 @@ jobs:
           git diff --check
           git diff --stat
           pnpm list -r @tangle-network/sandbox @tangle-network/agent-interface @tangle-network/agent-core zod
+      - name: Pack exact candidate
+        run: |
+          mkdir -p "$RUNNER_TEMP/sweep4-pack"
+          pnpm --dir packages/tcloud pack --pack-destination "$RUNNER_TEMP/sweep4-pack"
+          sha256sum "$RUNNER_TEMP/sweep4-pack/"*.tgz
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          import {createHash} from 'node:crypto';
+          const b=readFileSync(process.env.RUNNER_TEMP+'/sweep4-pack/tangle-network-tcloud-0.6.0.tgz');
+          console.log('candidateIntegrity=sha512-'+createHash('sha512').update(b).digest('base64'));
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sweep4-tcloud-package
+          path: ${{ runner.temp }}/sweep4-pack/*.tgz
+          retention-days: 30
       - name: Retain successful candidate on isolated branch
         run: |
           git config user.name 'tangletools'
