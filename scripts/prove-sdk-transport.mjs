@@ -83,8 +83,38 @@ async function receipts() {
   }
 }
 
+async function receiptWithoutUsage() {
+  let requests = 0
+  const reached = []
+  const server = createServer((req, res) => {
+    requests++
+    req.resume()
+    res.writeHead(200, { 'Content-Type': 'application/json', 'X-Tangle-Cost-USD': '0.033' })
+    res.end(JSON.stringify({ id: 'header-only', choices: [{ message: { role: 'assistant', content: 'proof' } }] }))
+  })
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const client = new TCloudClient({
+    apiKey: 'local-proof-only', baseURL: `http://127.0.0.1:${server.address().port}/v1`,
+    limits: { maxTotalSpend: 0.03, maxCostPerRequest: 0.02, onLimitReached: event => reached.push(event) },
+  })
+  try {
+    const result = await client.chat({ messages: [{ role: 'user', content: 'proof' }] })
+    console.log(JSON.stringify({ proof: 'receipt-without-usage', receipt: result.tangle ?? null, usage: client.usage }))
+    assert.deepEqual(result.tangle, { costUsd: 0.033, costSource: 'receipt' })
+    assert.equal(client.usage.totalSpent, 0.033)
+    assert.deepEqual(reached, [{ type: 'cost', current: 0.033, limit: 0.02 }])
+    await assert.rejects(client.chat({ messages: [{ role: 'user', content: 'blocked' }] }), { status: 429 })
+    assert.equal(requests, 1, 'spend limit allowed another upstream request')
+  } finally {
+    server.closeAllConnections()
+    await new Promise(resolve => server.close(resolve))
+  }
+}
+
 await cancellation('chat')
 await cancellation('search')
 await cancellation('retry')
 await cancellation('chat', true)
 await receipts()
+await receiptWithoutUsage()

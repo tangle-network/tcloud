@@ -6,6 +6,7 @@ Requires Node 20.19 or later. GTR proof uses Node 22.
 
 - Forward chat, streaming-chat and search cancellation to the actual HTTP transport and response body. Abort retry waits without another attempt. Preserve cancellation through the relayer.
 - Expose per-response `tangle.costUsd` with a receipt/rates source. Never label the legacy aggregate fallback estimate as a reported cost. This avoids concurrent-call accounting races in consumers.
+- Meter billed response headers even when token usage is absent. Apply aggregate spend limits to those charges.
 - Move the SDK and Pi package to the published Sandbox 0.54 line. No Sandbox REST facade or agent-runner consolidation is included.
 - Retain the Pi raw-HTTP deletion already merged in #58.
 

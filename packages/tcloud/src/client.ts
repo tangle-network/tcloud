@@ -447,32 +447,36 @@ export class TCloudClient {
   /** Track cost after a response, using actual pricing from response headers when available */
   private trackCost(completion: ChatCompletion, res?: Response) {
     this._requestCount++
-    if (completion.usage) {
-      let estimatedCost: number
+    const usage = completion.usage
+    const billed = nonnegativeAmount(res?.headers.get('x-tangle-cost-usd'))
+      ?? nonnegativeAmount(usage?.billed_cost)
+      ?? nonnegativeAmount(usage?.cost)
+    let estimatedCost: number
+
+    if (billed !== undefined) {
+      estimatedCost = billed
+      completion.tangle = { costUsd: billed, costSource: 'receipt' }
+    } else if (usage) {
       const inputPrice = nonnegativeAmount(res?.headers.get('x-tangle-price-input'))
       const outputPrice = nonnegativeAmount(res?.headers.get('x-tangle-price-output'))
-      const billed = nonnegativeAmount(res?.headers.get('x-tangle-cost-usd'))
-        ?? nonnegativeAmount(completion.usage.billed_cost)
-        ?? nonnegativeAmount(completion.usage.cost)
-      const inputTokens = nonnegativeAmount(completion.usage.prompt_tokens)
-      const outputTokens = nonnegativeAmount(completion.usage.completion_tokens)
+      const inputTokens = nonnegativeAmount(usage.prompt_tokens)
+      const outputTokens = nonnegativeAmount(usage.completion_tokens)
 
-      if (billed !== undefined) {
-        estimatedCost = billed
-        completion.tangle = { costUsd: billed, costSource: 'receipt' }
-      } else if (inputPrice !== undefined && outputPrice !== undefined
+      if (inputPrice !== undefined && outputPrice !== undefined
         && inputTokens !== undefined && outputTokens !== undefined) {
         estimatedCost = inputTokens * inputPrice + outputTokens * outputPrice
         completion.tangle = { costUsd: estimatedCost, costSource: 'rates' }
       } else {
-        const tokens = completion.usage.total_tokens || 0
+        const tokens = usage.total_tokens || 0
         estimatedCost = tokens * 0.000001 // $1/M tokens fallback
       }
-      this._totalSpent += estimatedCost
+    } else {
+      return
+    }
+    this._totalSpent += estimatedCost
 
-      if (this.limits?.maxCostPerRequest && estimatedCost > this.limits.maxCostPerRequest) {
-        this.limits.onLimitReached?.({ type: 'cost', current: estimatedCost, limit: this.limits.maxCostPerRequest })
-      }
+    if (this.limits?.maxCostPerRequest && estimatedCost > this.limits.maxCostPerRequest) {
+      this.limits.onLimitReached?.({ type: 'cost', current: estimatedCost, limit: this.limits.maxCostPerRequest })
     }
   }
 
