@@ -15,20 +15,20 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean",
+    "build": "tsdown",
     "prepublishOnly": "node ../../scripts/check-cohort-ranges.mjs && pnpm build",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js"
   },
   "dependencies": {
     "ethers": "^6.17.0",
-    "hono": "^4.13.5"
+    "hono": "^4.13.9"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "tsup": "^8.5.1",
-    "tsx": "^4.23.12",
-    "typescript": "^5.9.3"
+    "@types/node": "^26.6.3",
+    "tsdown": "^0.23.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
   },
   "license": "MIT"
 }

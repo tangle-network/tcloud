@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0
+
+Requires Node 22.12 or later, because commander 15 does.
+
+- Move the SDK and the Pi package to the published Sandbox 0.55 line (`>=0.55.3 <0.56.0`).
+- Update commander to 15 and viem to 2.56.9.
+- The Pi extension (tcloud-agent) now names its optional peer `@earendil-works/pi-coding-agent` 0.87, the renamed Pi package, and checks against its real types.
+- Build with tsdown and TypeScript 7. Export paths, formats and entry file names are unchanged.
+
 ## 0.6.0
 
 Requires Node 20.19 or later. GTR proof uses Node 22.

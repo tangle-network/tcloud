@@ -1,7 +1,7 @@
 {
   "name": "@tangle-network/tcloud-agent",
   "version": "0.5.0",
-  "description": "Agent run-loop primitive over Tangle sandbox transports \u2014 runs an AgentProfile against a brief with criterion gates, budget caps, and streaming events. Includes TangleToolProvider for Pi tool integration.",
+  "description": "Agent run-loop primitive over Tangle sandbox transports — runs an AgentProfile against a brief with criterion gates, budget caps, and streaming events. Includes TangleToolProvider for Pi tool integration.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -33,35 +33,32 @@
     ]
   },
   "scripts": {
-    "build": "tsup src/index.ts src/pi-extension.ts --format esm --dts --clean",
+    "build": "tsdown",
     "dev": "tsx src/index.ts",
     "test": "vitest run",
     "prepublishOnly": "node ../../scripts/check-cohort-ranges.mjs && pnpm build"
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.52",
-    "@tangle-network/sandbox": ">=0.54.2 <0.55.0",
+    "@tangle-network/sandbox": ">=0.55.3 <0.56.0",
     "@tangle-network/tcloud": "workspace:^",
-    "viem": "^2.56.0"
+    "viem": "^2.56.9"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.70.0",
-    "@mariozechner/pi-tui": "^0.70.0"
+    "@earendil-works/pi-coding-agent": "^0.87.1"
   },
   "peerDependenciesMeta": {
-    "@mariozechner/pi-coding-agent": {
-      "optional": true
-    },
-    "@mariozechner/pi-tui": {
+    "@earendil-works/pi-coding-agent": {
       "optional": true
     }
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "tsup": "^8.5.1",
-    "tsx": "^4.23.12",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "@earendil-works/pi-coding-agent": "^0.87.1",
+    "@types/node": "^26.6.3",
+    "tsdown": "^0.23.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
   },
   "files": [
     "dist",
@@ -86,6 +83,6 @@
     "registry": "https://registry.npmjs.org/"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.12.0"
   }
 }

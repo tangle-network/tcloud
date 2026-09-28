@@ -11,10 +11,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "baseUrl": ".",
-    "paths": {
-      "@tangle-network/tcloud-attestation": ["../tcloud-attestation/src/index.ts"]
-    }
+    "types": ["node"]
   },
   "include": ["src"]
 }

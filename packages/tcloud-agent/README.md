@@ -48,13 +48,13 @@ pnpm add @tangle-network/tcloud-agent @tangle-network/tcloud
 # npm install / yarn add also work
 ```
 
-Peer dependencies (only needed for the Pi-extension entry point — skip if you're driving the agent from a server / CLI):
+Peer dependency (only needed for the Pi-extension entry point — skip if you're driving the agent from a server / CLI):
 
 ```bash
-pnpm add -D @mariozechner/pi-coding-agent @mariozechner/pi-tui
+pnpm add -D @earendil-works/pi-coding-agent
 ```
 
-Requires Node 20+.
+Requires Node 22.12+.
 
 ---
 
@@ -367,7 +367,7 @@ Build a runnable agent. Identical surface — function form is just `new Agent(.
 
 ### Subpath: `@tangle-network/tcloud-agent/pi-extension`
 
-Drop-in [Pi](https://github.com/mariozechner/pi) extension that registers the agent runner + `TangleToolProvider` into a Pi config. Peer-installable; requires `@mariozechner/pi-coding-agent` and `@mariozechner/pi-tui`.
+Drop-in [Pi](https://github.com/earendil-works/pi) extension that registers the agent runner + `TangleToolProvider` into a Pi config. Peer-installable; requires `@earendil-works/pi-coding-agent`.
 
 ```ts
 import tcloudExtension from '@tangle-network/tcloud-agent/pi-extension'
@@ -418,7 +418,7 @@ The runner owns the loop, not the runtime. The runtime is an `AgentSessionTransp
 | Budget caps | ✅ first-class | manual | manual | manual |
 | Workspace policy | transport-scoped | manual | manual | implicit |
 | Verdict shape | typed enum | string | string | string |
-| Browser-runnable | partial (Node 20+ today) | yes | ✅ | ❌ subprocess |
+| Browser-runnable | partial (Node 22.12+ today) | yes | ✅ | ❌ subprocess |
 | Tangle routing / sandbox | ✅ native | adapter | adapter | n/a |
 
 **Use `tcloud-agent` when:** you want a small, opinionated run-loop primitive over Tangle infrastructure with built-in criterion + budget gates. **Skip it when:** you only need a single chat call (use the TCloud SDK directly) or you want a full agent framework with planners / memory / tool registries (LangChain or Mastra).
