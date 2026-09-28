@@ -151,6 +151,14 @@ jobs:
           console.log(`${expectedName}@${expectedVersion} tarball=${tarballPath} sha1=${sha1} entries=${entries.length}`)
           NODE
 
+      - name: Retain inspected release tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tcloud-${{ steps.release.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.package.outputs.path }}
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Bundle a clean consumer
         env:
           TARBALL_PATH: ${{ steps.package.outputs.path }}
