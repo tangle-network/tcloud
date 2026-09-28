@@ -4,3 +4,9 @@ packages:
 # hold on them would freeze this workspace behind its own cohort.
 minimumReleaseAgeExclude:
   - '@tangle-network/*'
+# esbuild's postinstall verifies its platform binary. The Pi dev toolchain's
+# @google/genai preinstall is an echo, and protobufjs only checks its optional CLI.
+allowBuilds:
+  esbuild: true
+  '@google/genai': false
+  protobufjs: false

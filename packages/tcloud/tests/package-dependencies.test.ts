@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { isBuiltin } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import ts from 'typescript'
+import { type Node, parseSync, visitorKeys } from 'oxc-parser'
 import { describe, expect, it } from 'vitest'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -22,28 +22,53 @@ function packageName(specifier: string): string | null {
   return specifier.split('/').slice(0, 2).join('/')
 }
 
+function isNode(value: unknown): value is Node {
+  return typeof value === 'object' && value !== null && typeof (value as { type?: unknown }).type === 'string'
+}
+
+function stringLiteral(node: Node | null | undefined): string | undefined {
+  return node?.type === 'Literal' && typeof node.value === 'string' ? node.value : undefined
+}
+
+// TypeScript 7 ships no JavaScript compiler API, so the source is parsed with oxc.
 function importedPackages(path: string): string[] {
-  const source = ts.createSourceFile(path, readFileSync(path, 'utf8'), ts.ScriptTarget.Latest, true)
+  const parsed = parseSync(path, readFileSync(path, 'utf8'))
+  if (parsed.errors.length > 0) {
+    throw new SyntaxError(`Cannot inspect ${path}: ${parsed.errors.map((error) => error.message).join('; ')}`)
+  }
   const specifiers: string[] = []
 
-  function addSpecifier(node: ts.Expression | undefined): void {
-    if (node && ts.isStringLiteralLike(node)) specifiers.push(node.text)
+  function addSpecifier(node: Node | null | undefined): void {
+    const text = stringLiteral(node)
+    if (text !== undefined) specifiers.push(text)
   }
 
-  function visit(node: ts.Node): void {
-    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      addSpecifier(node.moduleSpecifier)
-    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
-      addSpecifier(node.moduleReference.expression)
-    } else if (ts.isCallExpression(node)) {
-      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword
-      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === 'require'
-      if (isDynamicImport || isRequire) addSpecifier(node.arguments[0])
+  function visit(node: Node): void {
+    switch (node.type) {
+      case 'ImportDeclaration':
+      case 'ExportAllDeclaration':
+      case 'ExportNamedDeclaration':
+      case 'ImportExpression':
+        addSpecifier(node.source)
+        break
+      case 'TSExternalModuleReference':
+        addSpecifier(node.expression)
+        break
+      case 'CallExpression':
+        if (node.callee.type === 'Identifier' && node.callee.name === 'require') addSpecifier(node.arguments[0] as Node)
+        break
     }
-    ts.forEachChild(node, visit)
+    for (const key of visitorKeys[node.type] ?? []) {
+      const child = (node as unknown as Record<string, unknown>)[key]
+      if (Array.isArray(child)) {
+        for (const item of child) if (isNode(item)) visit(item)
+      } else if (isNode(child)) {
+        visit(child)
+      }
+    }
   }
 
-  visit(source)
+  visit(parsed.program as unknown as Node)
   return specifiers
     .map(packageName)
     .filter((name): name is string => name !== null)

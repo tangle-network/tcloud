@@ -454,7 +454,7 @@ describe('Agent.run', () => {
   it('Sandbox SDK transport swaps the cataloged id for a turn inline profile and keeps the model transport', async () => {
     const { prompts, sandbox } = makeRecordingSandbox()
     const turnProfile = { name: 'turn', prompt: 'be brief', model: { default: 'kimi-k2' } }
-    const session = sandboxSdkTransport({
+    const session = await sandboxSdkTransport({
       sandbox: sandbox as any,
       backend: { model: { provider: 'zai', apiKey: 'k', model: 'claude-x' } } as any,
     }).start({ profile: 'sf-proposer' })
@@ -474,7 +474,7 @@ describe('Agent.run', () => {
 
   it('Sandbox SDK transport leaves a turn without an inline profile on the cataloged id', async () => {
     const { prompts, sandbox } = makeRecordingSandbox()
-    const session = sandboxSdkTransport({ sandbox: sandbox as any }).start({
+    const session = await sandboxSdkTransport({ sandbox: sandbox as any }).start({
       profile: 'sf-proposer',
     })
 

@@ -549,8 +549,7 @@ program.command('transcribe')
   .action(async (file, opts) => {
     const client = getClient() as TCloud
     try {
-      const data = fs.readFileSync(file)
-      const blob = new Blob([data])
+      const blob = new Blob([new Uint8Array(fs.readFileSync(file))])
       const resp = await client.transcribe(blob, {
         model: opts.model,
         language: opts.language,

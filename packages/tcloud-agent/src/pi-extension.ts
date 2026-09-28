@@ -18,7 +18,7 @@
  * - Spending key: ephemeral, signs x402 SpendAuth per request, rotated
  */
 
-import type { ExtensionAPI, ExtensionContext } from '@mariozechner/pi-coding-agent'
+import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
 import { Type } from '@sinclair/typebox'
 import { TCloudClient } from '@tangle-network/tcloud'
 import { signSpendAuth, generateWallet, type ShieldedWallet } from '@tangle-network/tcloud/shielded'

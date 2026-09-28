@@ -11,10 +11,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "baseUrl": ".",
-    "paths": {
-      "@mariozechner/pi-coding-agent": ["src/pi-types.d.ts"]
-    }
+    "types": ["node"]
   },
   "include": ["src"]
 }

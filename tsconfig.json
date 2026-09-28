@@ -11,11 +11,10 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
-      "@tangle-network/tcloud": ["packages/tcloud/src/index.ts"],
-      "@tangle-network/tcloud/*": ["packages/tcloud/src/*.ts"],
-      "@tangle-network/tcloud-attestation": ["packages/tcloud-attestation/src/index.ts"]
+      "@tangle-network/tcloud": ["./packages/tcloud/src/index.ts"],
+      "@tangle-network/tcloud/*": ["./packages/tcloud/src/*.ts"],
+      "@tangle-network/tcloud-attestation": ["./packages/tcloud-attestation/src/index.ts"]
     }
   },
   "include": ["packages/*/src/**/*.ts"],
