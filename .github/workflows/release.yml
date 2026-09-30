@@ -276,7 +276,7 @@ jobs:
             --provenance \
             --registry "$REGISTRY"
 
-          for attempt in 1 2 3 4 5 6; do
+          for attempt in {1..31}; do
             published_sha1="$(registry_sha1)"
             if [[ "$published_sha1" == "$EXPECTED_SHA1" ]]; then
               echo "Published and verified ${EXPECTED_NAME}@${EXPECTED_VERSION} sha1=${EXPECTED_SHA1}"
@@ -286,8 +286,8 @@ jobs:
               echo "Registry returned different bytes: local=$EXPECTED_SHA1 registry=$published_sha1" >&2
               exit 1
             fi
-            if (( attempt < 6 )); then sleep 10; fi
+            if (( attempt < 31 )); then sleep 10; fi
           done
 
-          echo "${EXPECTED_NAME}@${EXPECTED_VERSION} was not visible at $REGISTRY after six checks" >&2
+          echo "${EXPECTED_NAME}@${EXPECTED_VERSION} was not visible at $REGISTRY after 31 checks (five minutes)" >&2
           exit 1
