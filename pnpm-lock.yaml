@@ -173,8 +173,8 @@ importers:
   packages/tcloud:
     dependencies:
       '@tangle-network/sandbox':
-        specifier: '>=0.58.4 <0.59.0'
-        version: 0.58.4(openai@6.40.0(ws@8.21.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))
+        specifier: '>=0.58.4 <0.60.0'
+        version: 0.59.0(openai@6.40.0(ws@8.21.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))
       '@tangle-network/tcloud-attestation':
         specifier: workspace:^
         version: link:../tcloud-attestation
@@ -938,8 +938,8 @@ packages:
       viem:
         optional: true
 
-  '@tangle-network/sandbox@0.58.4':
-    resolution: {integrity: sha512-wdpocVvSNrAmjmnqGLE4KqDrMq7+8PVCChaLWrakbhuFPksbdwcGsYgHPdASbHPpAi3GGo/YcgMM1x+3igywlQ==}
+  '@tangle-network/sandbox@0.59.0':
+    resolution: {integrity: sha512-L0gOXxhZ+Wz11P92aQjzroNEm6P3bPf9PbAZS+XSnhq5u2D3CyPF86yp6i/IHqlwIn/LVTww/zQGlEiAOH8KHQ==}
     peerDependencies:
       '@mastra/core': ^1.36.0
       '@modelcontextprotocol/sdk': ^1.30.0
@@ -2593,7 +2593,7 @@ snapshots:
       openai: 6.40.0(ws@8.22.0)(zod@4.5.4)
       viem: 2.56.9(typescript@7.0.2)(zod@4.5.4)
 
-  '@tangle-network/sandbox@0.58.4(openai@6.40.0(ws@8.21.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))':
+  '@tangle-network/sandbox@0.59.0(openai@6.40.0(ws@8.21.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))':
     dependencies:
       '@tangle-network/agent-core': 0.10.2
       '@tangle-network/agent-interface': 2.15.0
