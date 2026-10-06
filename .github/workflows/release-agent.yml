@@ -1,0 +1,294 @@
+name: Release @tangle-network/tcloud-agent
+
+# Same release contract as release.yml, for the agent package. npm trusted
+# publishing is configured per package and per workflow file, so the npm
+# package settings for @tangle-network/tcloud-agent must list this repository
+# and `release-agent.yml` before a tag can publish.
+
+on:
+  push:
+    tags:
+      - '@tangle-network/tcloud-agent@*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing @tangle-network/tcloud-agent release tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: npm-release-tcloud-agent
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.3
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+
+      - name: Validate release tag
+        id: release
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          package_name="$(node -p "require('./packages/tcloud-agent/package.json').name")"
+          package_version="$(node -p "require('./packages/tcloud-agent/package.json').version")"
+          expected_tag="${package_name}@${package_version}"
+          checkout_sha="$(git rev-parse HEAD)"
+          tag_sha="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          default_ref="refs/remotes/origin/${DEFAULT_BRANCH}"
+
+          git fetch --no-tags origin "+refs/heads/${DEFAULT_BRANCH}:${default_ref}"
+          default_sha="$(git rev-parse "$default_ref")"
+
+          if [[ "$package_name" != '@tangle-network/tcloud-agent' ]]; then
+            echo "Unexpected package name: $package_name" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
+            echo "Release tag $RELEASE_TAG does not match $expected_tag" >&2
+            exit 1
+          fi
+          if [[ "$tag_sha" != "$checkout_sha" ]]; then
+            echo "Tag $RELEASE_TAG points to $tag_sha, checked out $checkout_sha" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$checkout_sha" "$default_ref"; then
+            echo "Release commit $checkout_sha is not on ${default_ref} at $default_sha" >&2
+            exit 1
+          fi
+
+          {
+            echo "name=$package_name"
+            echo "version=$package_version"
+            echo "tag=$RELEASE_TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release $RELEASE_TAG is $checkout_sha"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate package dependencies
+        run: node scripts/check-cohort-ranges.mjs
+
+      - name: Build tcloud-agent
+        run: pnpm --filter '@tangle-network/tcloud-agent...' build
+
+      - name: Test tcloud-agent
+        run: pnpm --filter @tangle-network/tcloud-agent test
+
+      - name: Pack release artifact
+        id: package
+        working-directory: packages/tcloud-agent
+        env:
+          PACK_DIR: ${{ runner.temp }}/tcloud-agent-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PACK_DIR"
+          pnpm pack --pack-destination "$PACK_DIR" > "$RUNNER_TEMP/tcloud-agent-pack.log"
+
+          mapfile -t tarballs < <(find "$PACK_DIR" -maxdepth 1 -type f -name '*.tgz' -print)
+          if (( ${#tarballs[@]} != 1 )); then
+            echo "Expected one release tarball, found ${#tarballs[@]}" >&2
+            cat "$RUNNER_TEMP/tcloud-agent-pack.log" >&2
+            exit 1
+          fi
+
+          echo "path=${tarballs[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect packed artifact
+        id: artifact
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          EXPECTED_NAME: ${{ steps.release.outputs.name }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - "$TARBALL_PATH" "$EXPECTED_NAME" "$EXPECTED_VERSION" <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs'
+          import { execFileSync } from 'node:child_process'
+          import { createHash } from 'node:crypto'
+
+          const [tarballPath, expectedName, expectedVersion] = process.argv.slice(2)
+          const manifest = JSON.parse(execFileSync('tar', ['-xOf', tarballPath, 'package/package.json'], { encoding: 'utf8' }))
+          const entries = execFileSync('tar', ['-tzf', tarballPath], { encoding: 'utf8' }).trim().split('\n')
+          const requiredEntries = ['package/package.json', 'package/dist/index.js', 'package/dist/pi-extension.js']
+
+          if (manifest.name !== expectedName || manifest.version !== expectedVersion) {
+            throw new Error(`Packed manifest is ${manifest.name}@${manifest.version}, expected ${expectedName}@${expectedVersion}`)
+          }
+          for (const entry of requiredEntries) {
+            if (!entries.includes(entry)) throw new Error(`Packed artifact is missing ${entry}`)
+          }
+          if (entries.some((entry) => entry.includes('node_modules'))) {
+            throw new Error('Packed artifact contains node_modules')
+          }
+          if (JSON.stringify(manifest).includes('workspace:')) {
+            throw new Error('Packed manifest contains an unresolved workspace dependency')
+          }
+          if (manifest.publishConfig?.registry && !manifest.publishConfig.registry.includes('registry.npmjs.org')) {
+            throw new Error(`Packed manifest targets ${manifest.publishConfig.registry}`)
+          }
+
+          const sha1 = createHash('sha1').update(readFileSync(tarballPath)).digest('hex')
+          appendFileSync(process.env.GITHUB_OUTPUT, `sha1=${sha1}\n`)
+          console.log(`${expectedName}@${expectedVersion} tarball=${tarballPath} sha1=${sha1} entries=${entries.length}`)
+          NODE
+
+      - name: Retain inspected release tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tcloud-agent-${{ steps.release.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.package.outputs.path }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Bundle a clean consumer
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          CONSUMER_DIR: ${{ runner.temp }}/tcloud-agent-consumer
+        run: |
+          set -euo pipefail
+          mkdir -p "$CONSUMER_DIR"
+          npm install --prefix "$CONSUMER_DIR" --ignore-scripts \
+            "$TARBALL_PATH" \
+            esbuild@0.28.2
+
+          node --input-type=module - "$CONSUMER_DIR" "$EXPECTED_VERSION" <<'NODE'
+          import { writeFileSync } from 'node:fs'
+          import { readFile } from 'node:fs/promises'
+          import { join } from 'node:path'
+
+          const [consumerDir, expectedVersion] = process.argv.slice(2)
+          const manifest = JSON.parse(await readFile(
+            join(consumerDir, 'node_modules/@tangle-network/tcloud-agent/package.json'),
+            'utf8',
+          ))
+          if (manifest.version !== expectedVersion) {
+            throw new Error(`Consumer installed ${manifest.version}, expected ${expectedVersion}`)
+          }
+
+          writeFileSync(join(consumerDir, 'entry.mjs'), [
+            "import { TangleToolProvider } from '@tangle-network/tcloud-agent'",
+            "if (typeof TangleToolProvider !== 'function') throw new Error('TangleToolProvider is not exported')",
+          ].join('\n'))
+          NODE
+
+          "$CONSUMER_DIR/node_modules/.bin/esbuild" \
+            "$CONSUMER_DIR/entry.mjs" \
+            --bundle \
+            --platform=node \
+            --format=esm \
+            --outfile="$CONSUMER_DIR/bundle.mjs"
+          node "$CONSUMER_DIR/bundle.mjs"
+
+      - name: Enforce Agent App dependency age
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          CONSUMER_DIR: ${{ runner.temp }}/tcloud-agent-age-policy-consumer
+        run: |
+          set -euo pipefail
+          mkdir -p "$CONSUMER_DIR"
+          npx --yes pnpm@11.24.0 --dir "$CONSUMER_DIR" init
+          node --input-type=module - "$CONSUMER_DIR" <<'NODE'
+          import { writeFileSync } from 'node:fs'
+          import { join } from 'node:path'
+
+          const [consumerDir] = process.argv.slice(2)
+          writeFileSync(join(consumerDir, 'pnpm-workspace.yaml'), [
+            'packages:',
+            "  - '.'",
+            '',
+            'autoInstallPeers: false',
+            'strictPeerDependencies: true',
+            '',
+            'minimumReleaseAge: 4320',
+            'minimumReleaseAgeStrict: true',
+            'minimumReleaseAgeIgnoreMissingTime: false',
+            'minimumReleaseAgeExclude:',
+            "  - '@tangle-network/*'",
+          ].join('\n'))
+          NODE
+          npx --yes pnpm@11.24.0 --dir "$CONSUMER_DIR" add "$TARBALL_PATH"
+
+      - name: Install release npm
+        run: npm install --global npm@12.1.0 --registry=https://registry.npmjs.org
+
+      # Tokenless: npm trusted publishing mints a short-lived credential from this
+      # workflow's OIDC token (id-token: write). The NPM_TOKEN secret returned E404
+      # on PUT for 0.6.0 (run 36370799261) and npm is restricting token publishes.
+      - name: Publish and verify npm artifact
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          EXPECTED_NAME: ${{ steps.release.outputs.name }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          EXPECTED_SHA1: ${{ steps.artifact.outputs.sha1 }}
+          REGISTRY: https://registry.npmjs.org
+        run: |
+          set -euo pipefail
+
+          registry_sha1() {
+            REGISTRY="$REGISTRY" EXPECTED_NAME="$EXPECTED_NAME" EXPECTED_VERSION="$EXPECTED_VERSION" node --input-type=module <<'NODE'
+          const registry = process.env.REGISTRY.replace(/\/$/, '')
+          const packageUrl = `${registry}/${encodeURIComponent(process.env.EXPECTED_NAME).replace('%40', '@')}`
+          const response = await fetch(packageUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15_000) })
+
+          if (response.status === 404) process.exit(0)
+          if (!response.ok) throw new Error(`${registry} returned HTTP ${response.status}`)
+
+          const metadata = await response.json()
+          const sha1 = metadata.versions?.[process.env.EXPECTED_VERSION]?.dist?.shasum
+          if (typeof sha1 === 'string') process.stdout.write(sha1)
+          NODE
+          }
+
+          existing_sha1="$(registry_sha1)"
+          if [[ -n "$existing_sha1" ]]; then
+            if [[ "$existing_sha1" != "$EXPECTED_SHA1" ]]; then
+              echo "${EXPECTED_NAME}@${EXPECTED_VERSION} already exists with different bytes" >&2
+              exit 1
+            fi
+            echo "${EXPECTED_NAME}@${EXPECTED_VERSION} already exists with the exact release bytes"
+            exit 0
+          fi
+
+          npm publish "$TARBALL_PATH" \
+            --access public \
+            --tag latest \
+            --provenance \
+            --registry "$REGISTRY"
+
+          for attempt in {1..31}; do
+            published_sha1="$(registry_sha1)"
+            if [[ "$published_sha1" == "$EXPECTED_SHA1" ]]; then
+              echo "Published and verified ${EXPECTED_NAME}@${EXPECTED_VERSION} sha1=${EXPECTED_SHA1}"
+              exit 0
+            fi
+            if [[ -n "$published_sha1" ]]; then
+              echo "Registry returned different bytes: local=$EXPECTED_SHA1 registry=$published_sha1" >&2
+              exit 1
+            fi
+            if (( attempt < 31 )); then sleep 10; fi
+          done
+
+          echo "${EXPECTED_NAME}@${EXPECTED_VERSION} was not visible at $REGISTRY after 31 checks (five minutes)" >&2
+          exit 1
