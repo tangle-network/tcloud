@@ -50,6 +50,38 @@ import type {
 } from './types'
 import { PrivateRouter, type OperatorInfo, type RoutingStrategy } from './private-router'
 import { packageVersion } from './version'
+import {
+  deriveChildBudgetUsd,
+  resolveModelWithinAllowList,
+  type DecisionCreateOptions,
+  type DecisionResponse,
+  type DecisionResult,
+  type DecisionReceipts,
+  type KeyScopeInfo,
+  type ModelWithinAllowListResolution,
+  type SystemOneEvaluateOptions,
+  type SystemOneResult,
+  type SystemOneResultBody,
+} from './decisions'
+
+/** Cost + identity receipts off a decision-surface response. */
+function receiptsFrom(res: Response): DecisionReceipts {
+  const num = (name: string): number | null => {
+    const raw = res.headers.get(name)
+    if (raw === null) return null
+    const parsed = Number(raw)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return {
+    generationId: res.headers.get('X-Generation-Id'),
+    servedModel: res.headers.get('X-Tangle-Served-Model'),
+    costUsd: num('X-Tangle-Cost-USD'),
+    providerCostUsd: num('X-Tangle-Provider-Cost-USD'),
+    maxCostUsd: num('X-Tangle-Max-Cost-USD'),
+    replayed: res.headers.get('X-Idempotent-Replay') === 'true',
+  }
+}
+
 
 /** Non-enumerable marker set on clients constructed via {@link TCloudClient.rotating}. */
 const ROTATING_MARKER = '__tcloudRotating'
@@ -547,6 +579,19 @@ export class TCloudClient {
   }
 
   /**
+   * Shared request helper for billable calls that keep the Response (the
+   * decision surfaces read cost/identity receipts off its headers).
+   */
+  private async _requestWithResponse(url: string, init: RequestInit & { method?: string } = {}): Promise<Response> {
+    this.checkLimits()
+    // Merge, never clobber: the caller's headers (idempotency, cost limits)
+    // ride BESIDE the client's Authorization, not instead of it.
+    const res = await this._doFetch(url, { ...init, headers: { ...this.headers, ...init.headers } }, false)
+    this._requestCount++
+    return res
+  }
+
+  /**
    * Shared request helper for billable JSON API calls.
    * Enforces: checkLimits → fetch with retry/timeout → error parsing → requestCount.
    */
@@ -876,10 +921,133 @@ export class TCloudClient {
    * Child keys inherit the parent's product scope, allowedModels, and rpmLimit
    * if not specified. Budget cannot exceed the parent's remaining budget.
    */
+  // ── Decision surfaces + key scope ──
+  //
+  // Two wires, one job (see src/decisions.ts): /v1/decisions is OpenAI's
+  // native wire served verbatim (per-question refusals flow through);
+  // /v1/systemone is the fleet's translated, strictly-validated wire. Both
+  // are billable (input-only at the row's reviewed rate) and idempotent.
+
+  /** The OpenAI Decisions wire, natively: `client.decisions.create(...)`. */
+  readonly decisions = {
+    create: (options: DecisionCreateOptions): Promise<DecisionResult> => this._decisionsCreate(options),
+  }
+
+  private async _decisionsCreate(options: DecisionCreateOptions): Promise<DecisionResult> {
+    const headers: Record<string, string> = {}
+    if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey
+    if (options.maxCostUsd !== undefined) headers['X-Tangle-Max-Cost-USD'] = String(options.maxCostUsd)
+    // Verbatim pass-through: only the model rides as a first-class field —
+    // every OpenAI extension (prompt cache, safety id, item inputs) keeps
+    // its native shape end to end.
+    const body: Record<string, unknown> = {
+      model: options.model,
+      input: options.input,
+      questions: options.questions,
+      ...(options.safetyIdentifier !== undefined ? { safety_identifier: options.safetyIdentifier } : {}),
+      ...(options.promptCacheKey !== undefined ? { prompt_cache_key: options.promptCacheKey } : {}),
+    }
+    const res = await this._requestWithResponse(`${this.baseURL}/decisions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: options.signal,
+    })
+    const decision = await res.json() as DecisionResponse
+    return { decision, receipts: receiptsFrom(res) }
+  }
+
+  /** The System One wire (fleet judges): state + named questions, answers by name. */
+  async systemone(options: SystemOneEvaluateOptions): Promise<SystemOneResult> {
+    const headers: Record<string, string> = {}
+    if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey
+    if (options.maxCostUsd !== undefined) headers['X-Tangle-Max-Cost-USD'] = String(options.maxCostUsd)
+    const res = await this._requestWithResponse(`${this.baseURL}/systemone`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: options.model,
+        state: options.state,
+        questions: options.questions,
+      }),
+      signal: options.signal,
+    })
+    const result = await res.json() as SystemOneResultBody
+    return { result, receipts: receiptsFrom(res) }
+  }
+
+  /**
+   * This key's own scope, live: `GET /v1/key` — the allow-list in its
+   * positive form (null = unscoped), budgets, rate limit, expiry. Scoped
+   * callers route within `allowedModels` BEFORE a first refusal.
+   */
+  async keyInfo(): Promise<KeyScopeInfo> {
+    const raw = await this._fetch<{ data: Record<string, unknown> }>(`${this.baseURL}/key`)
+    const data = raw?.data ?? {}
+    const allowed = data.allowed_models
+    const usage = (data.usage ?? {}) as Record<string, unknown>
+    const monthly = Number(usage.monthly ?? 0)
+    const remaining = typeof data.limit_remaining === 'number' ? data.limit_remaining : null
+    return {
+      allowedModels: Array.isArray(allowed) && allowed.length > 0 ? (allowed as string[]) : null,
+      limit: typeof data.limit === 'number' ? data.limit : null,
+      limitRemaining: remaining,
+      limitReset: data.limit_reset === 'monthly' ? 'monthly' : null,
+      rateLimitRequests: typeof data.rate_limit === 'object' && data.rate_limit !== null
+        ? typeof (data.rate_limit as { requests?: unknown }).requests === 'number'
+          ? (data.rate_limit as { requests: number }).requests
+          : null
+        : null,
+      expiresAt: typeof data.expires_at === 'string' ? data.expires_at : null,
+    }
+  }
+
+  private _allowedModelsCache: { models: string[] | null; at: number } | null = null
+  private static readonly ALLOWED_MODELS_TTL_MS = 5 * 60_000
+
+  /**
+   * The key's model allow-list (null when unscoped), cached five minutes.
+   * `refresh: true` forces a re-read — key rotations and allow-list edits
+   * land here first.
+   */
+  async allowedModels(options: { refresh?: boolean } = {}): Promise<string[] | null> {
+    const now = Date.now()
+    if (!options.refresh && this._allowedModelsCache && now - this._allowedModelsCache.at < TCloudClient.ALLOWED_MODELS_TTL_MS) {
+      return this._allowedModelsCache.models
+    }
+    const info = await this.keyInfo()
+    this._allowedModelsCache = { models: info.allowedModels, at: now }
+    return info.allowedModels
+  }
+
+  /**
+   * Resolve a model request against this key's allow-list (live, cached):
+   * permitted → `{status:'allowed'}`; a permitted fallback → rerouted with
+   * the blocked model named; nothing permitted → refused carrying the set —
+   * never a silent downgrade. Throws nothing; callers surface `refused`
+   * with `formatModelNotAllowedRefusal`.
+   */
+  async resolveModel(requested: string, options: { fallbacks?: readonly string[]; refresh?: boolean } = {}): Promise<ModelWithinAllowListResolution> {
+    const allowedModels = await this.allowedModels({ refresh: options.refresh })
+    return resolveModelWithinAllowList({ requested, allowedModels, fallbacks: options.fallbacks })
+  }
+
   async createKey(opts: CreateKeyOptions): Promise<CreatedKey> {
+    // The platform reserves a child's budget against its parent's REMAINING;
+    // an ask above it is refused outright. When the caller reports the
+    // parent's remaining, derive the ask (never above it, never below the
+    // platform minimum) instead of sending a flat default.
+    const body: CreateKeyOptions & { budgetUsd?: number } = { ...opts }
+    if (opts.parentBudgetRemainingUsd !== undefined) {
+      body.budgetUsd = opts.budgetUsd !== undefined
+        ? deriveChildBudgetUsd({ requestedUsd: opts.budgetUsd, parentRemainingUsd: opts.parentBudgetRemainingUsd })
+        : undefined
+      delete (body as { parentBudgetRemainingUsd?: number }).parentBudgetRemainingUsd
+      if (body.budgetUsd === undefined) delete body.budgetUsd
+    }
     const { data } = await this._fetch<{ data: CreatedKey }>(`${this.platformURL}/v1/keys`, {
       method: 'POST',
-      body: JSON.stringify(opts),
+      body: JSON.stringify(body),
     })
     return data
   }

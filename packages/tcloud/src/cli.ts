@@ -8,6 +8,7 @@
  */
 
 import { Command } from 'commander'
+import type { DecisionQuestion, SystemOneQuestion } from './decisions'
 import { TCloud } from './index'
 import { generateWallet, signSpendAuth, estimateCost, type ShieldedWallet } from './shielded'
 import { TCloudSandbox, type TCloudSandboxTee } from './sandbox'
@@ -314,6 +315,76 @@ wallet.command('list').description('List wallets').action(() => {
 })
 
 // ── chat ──
+
+// ── decisions / systemone / key scope ──
+
+program.command('decide')
+  .description('Ask decision questions about an input (OpenAI Decisions wire)')
+  .argument('<input>', 'The input to evaluate')
+  .option('-m, --model <model>', 'Decision model', 'gpt-6-luna')
+  .option('-p, --predicate <instructions...>', 'Predicate question(s): how likely is this true?')
+  .option('-c, --choice <name=options...>', 'Choice question: name then 2+ comma-separated options')
+  .action(async (input, opts) => {
+    const client = getClient()
+    const questions: DecisionQuestion[] = []
+    for (const instructions of opts.predicate ?? []) {
+      questions.push({ type: 'predicate', instructions })
+    }
+    if (opts.choice) {
+      const [name, options] = opts.choice
+      questions.push({
+        type: 'choice', name,
+        instructions: `Choose the best option for: ${name}`,
+        choices: String(options).split(',').map((v: string) => ({ value: v.trim() })),
+      })
+    }
+    if (questions.length === 0) {
+      console.error('Ask at least one question: --predicate "..." and/or --choice name=a,b')
+      process.exit(1)
+    }
+    const { decision, receipts } = await client.decisions.create({ model: opts.model, input, questions })
+    for (const answer of decision.answers) {
+      const name = answer.name ? `${answer.name}: ` : ''
+      if (answer.type === 'predicate') console.log(`${name}${(answer.probability * 100).toFixed(1)}% likely`)
+      else if (answer.type === 'choice') console.log(`${name}${String(answer.choice)} (${(answer.confidence * 100).toFixed(0)}% confident)`)
+      else if (answer.type === 'score') console.log(`${name}${answer.score} (confidence ${answer.confidence})`)
+      else console.log(`${name}refused`)
+    }
+    if (receipts.costUsd !== null) console.error(`cost: $${receipts.costUsd.toFixed(6)} (${decision.usage.input_tokens} input tokens)`)
+  })
+
+program.command('systemone')
+  .description('Evaluate System One decision questions (the fleet wire)')
+  .argument('<state>', 'The state to evaluate')
+  .option('-m, --model <model>', 'System One row', 'openai/gpt-6-luna')
+  .option('-n, --noul <name=instructions...>', 'Noul question(s): name then instructions')
+  .action(async (state, opts) => {
+    const client = getClient()
+    const questions: Record<string, SystemOneQuestion> = {}
+    for (const spec of opts.noul ?? []) {
+      const eq = spec.indexOf('=')
+      if (eq <= 0) { console.error('--noul expects name=instructions'); process.exit(1) }
+      questions[spec.slice(0, eq)] = { type: 'noul', instructions: spec.slice(eq + 1) } as SystemOneQuestion
+    }
+    if (Object.keys(questions).length === 0) {
+      console.error('Ask at least one question: --noul name=instructions')
+      process.exit(1)
+    }
+    const { result, receipts } = await client.systemone({ model: opts.model, state, questions })
+    for (const [name, answer] of Object.entries(result.answers)) {
+      if (answer.type === 'noul') console.log(`${name}: ${(answer.noul * 100).toFixed(1)}% likely`)
+      else if (answer.type === 'choice') console.log(`${name}: ${answer.choice} (${(answer.confidence * 100).toFixed(0)}% confident)`)
+      else console.log(`${name}: ${answer.score} (confidence ${answer.confidence})`)
+    }
+    if (receipts.costUsd !== null) console.error(`cost: $${receipts.costUsd.toFixed(6)} (${result.usage.input_tokens} input tokens)`)
+  })
+
+program.command('key-info')
+  .description("This key's own scope: allow-list, budgets, rate limit, expiry")
+  .action(async () => {
+    const info = await getClient().keyInfo()
+    console.log(JSON.stringify(info, null, 2))
+  })
 
 program.command('chat')
   .description('Chat with a model')
