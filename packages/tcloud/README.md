@@ -10,6 +10,10 @@ Zero framework dependencies. Pure `fetch` + SSE. Works in Node.js, Deno, Bun, an
 - [SDK](#sdk)
   - [Quick Start](#quick-start)
   - [Model Selection](#model-selection)
+  - [Decisions (OpenAI wire)](#decisions-openai-wire)
+  - [System One Decisions (fleet wire)](#system-one-decisions-fleet-wire)
+  - [Key Scope and Allow-Lists](#key-scope-and-allow-lists)
+  - [Budget-Derived Child Keys](#budget-derived-child-keys)
   - [Streaming](#streaming)
   - [Full Chat Completion](#full-chat-completion)
   - [Private Inference](#private-inference)
@@ -122,6 +126,83 @@ console.log(full.model, full.usage?.total_tokens)
 
 // Search available models
 const llamas = await client.searchModels('llama') // returns Model[]
+```
+
+### Decisions (OpenAI wire)
+
+Structured judgment over an input — up to 200 typed questions in one request, answers in order,
+billed input-only at the row's reviewed rate. The request passes through Router verbatim, so
+OpenAI SDK field semantics (prompt caching, safety identifiers, item inputs, per-question
+refusals) are preserved, and every call carries Router's idempotent replay and cost receipts.
+
+```ts
+const { decision, receipts } = await client.decisions.create({
+  model: 'gpt-6-luna',
+  input: 'The package arrived with a broken screen.',
+  questions: [
+    { type: 'predicate', name: 'damaged', instructions: 'Does the customer report a damaged item?' },
+    { type: 'choice', name: 'action', instructions: 'Choose the first response.',
+      choices: [{ value: 'refund' }, { value: 'replacement' }] },
+    { type: 'score', name: 'severity', instructions: 'Rate the severity.',
+      levels: [{ label: 'low' }, { label: 'high' }] },
+  ],
+  idempotencyKey: 'case-123',   // identical retry replays the settled outcome, never re-charged
+  maxCostUsd: 0.01,             // per-call ceiling; the router refuses above it
+})
+// decision.answers[0] -> { type: 'predicate', name: 'damaged', probability: 0.95 }
+// receipts.costUsd / providerCostUsd / generationId / replayed
+```
+
+### System One Decisions (fleet wire)
+
+The fleet's decision wire for judges and policy machinery: `state` + named
+`noul`/`score`/`choice` questions, answers keyed by name, strict validation, calibrated
+probability profiles. (`@tangle-network/agent-eval/systemone/protocol` owns the canonical
+contract; these types mirror it dependency-free.)
+
+```ts
+const { result, receipts } = await client.systemone({
+  model: 'openai/gpt-6-luna',
+  state: 'The filing cites 37 precedents; 31 support the motion.',
+  questions: {
+    strength: { type: 'score', instructions: 'How strong is the motion?', criteria: ['weak', 'moderate', 'strong'] },
+    outcome: { type: 'choice', instructions: 'Predict the ruling.', criteria: { granted: null, denied: null } },
+  },
+})
+// result.answers.strength -> { type: 'score', score: 2.03, confidence: 0.71, legend: {...}, probabilities: {...} }
+```
+
+### Key Scope and Allow-Lists
+
+A scoped key's allow-list is routing information, not a wall — query it before the first
+refusal, resolve within it, or parse it from the refusal itself:
+
+```ts
+const info = await client.keyInfo()          // { allowedModels, limitRemaining, rateLimitRequests, expiresAt, ... }
+const allowed = await client.allowedModels() // cached 5 min; { refresh: true } forces a re-read
+
+const resolution = await client.resolveModel('gpt-6-luna', { fallbacks: ['glm-5.3', 'gpt-5.5'] })
+// { status: 'allowed' } | { status: 'rerouted', model, blockedModel } | { status: 'refused', allowedModels }
+
+// Pure utilities (no client): parseModelNotAllowed(refusalMessage), resolveModelWithinAllowList(...),
+// formatModelNotAllowedRefusal({ requested, allowedModels }) — never a silent downgrade.
+```
+
+### Budget-Derived Child Keys
+
+The platform RESERVES a child key's budget against its parent's REMAINING — a flat default
+silently breaks every parent that holds less. Pass the parent's remaining and the ask derives
+within it (never above remaining, never below the platform minimum):
+
+```ts
+await client.createKey({
+  name: 'workspace-child',
+  budgetUsd: 25,                      // the configured ask
+  parentBudgetRemainingUsd: 5,        // -> asks $5, not $25 (derives, floors to cents, $0.50 min)
+  allowedModels: ['glm-5.3'],
+})
+// deriveChildBudgetUsd({ requestedUsd, parentRemainingUsd }) is exported for manual use;
+// an exhausted parent throws ParentBudgetExhaustedError before any mint.
 ```
 
 ### Streaming
@@ -385,6 +466,15 @@ tcloud credits balance         # Check balance
 tcloud credits add 10          # Add credits
 tcloud keys create my-app      # Create a new API key
 tcloud keys list               # List keys
+```
+
+### Decisions and Key Scope
+
+```bash
+tcloud decide "The package arrived with a broken screen." -p "Does the customer report a damaged item?"
+tcloud decide "Customer wants a refund for two dead units" --choice action=refund,replacement,deny
+tcloud systemone "The filing cites 37 precedents." -n strength="How strong is the motion?"
+tcloud key-info
 ```
 
 ### Wallet Management

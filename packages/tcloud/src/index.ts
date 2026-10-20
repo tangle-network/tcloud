@@ -212,6 +212,29 @@ export type {
 export type { ShieldedWallet } from './shielded'
 export { PrivateRouter, type PrivateRouterConfig, type RoutingStrategy, type OperatorInfo } from './private-router'
 export {
+  MIN_CHILD_KEY_BUDGET_USD,
+  ParentBudgetExhaustedError,
+  deriveChildBudgetUsd,
+  parseModelNotAllowed,
+  resolveModelWithinAllowList,
+  formatModelNotAllowedRefusal,
+  type DecisionQuestion,
+  type DecisionAnswer,
+  type DecisionUsage,
+  type DecisionCreateOptions,
+  type DecisionResponse,
+  type DecisionResult,
+  type DecisionReceipts,
+  type SystemOneState,
+  type SystemOneQuestion,
+  type SystemOneAnswer,
+  type SystemOneEvaluateOptions,
+  type SystemOneResult,
+  type SystemOneResultBody,
+  type KeyScopeInfo,
+  type ModelWithinAllowListResolution,
+} from './decisions'
+export {
   assertAttestation,
   createNitroHardwareVerifier,
   createSevSnpHardwareVerifier,

@@ -661,6 +661,11 @@ export interface CreateKeyOptions {
   product?: 'router' | 'sandbox' | 'evals' | 'blueprint-agent'
   projectId?: string
   budgetUsd?: number
+  /** The parent's REMAINING budget, when known (e.g. from the verify
+   *  response). When set, `budgetUsd` is derived within it — never above
+   *  remaining, never below the platform minimum — instead of sending a
+   *  flat default the platform would refuse. See deriveChildBudgetUsd. */
+  parentBudgetRemainingUsd?: number
   allowedModels?: string[]
   rpmLimit?: number
   /** ISO 8601 datetime. Must be in the future. */
