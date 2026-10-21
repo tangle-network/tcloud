@@ -153,16 +153,16 @@ describeLive('GET /v1/key — the key scope, live', () => {
 // Pure utilities stay ungated — they pin against the router's refusal text.
 describe('allow-list utilities (no network)', () => {
   it('the parse→resolve→format chain round-trips a live-shaped refusal', () => {
-    const refusal = 'Model "gpt-6-luna" is not in this key\'s allow-list. Allowed: glm-5.3, gpt-5.5.'
+    const refusal = 'Model "gpt-6-luna" is not in this key\'s allow-list. Allowed: glm-5.3, glm-5-turbo.'
     const allowed = parseModelNotAllowed(refusal)!
-    expect(allowed).toEqual(['glm-5.3', 'gpt-5.5'])
+    expect(allowed).toEqual(['glm-5.3', 'glm-5-turbo'])
     const rerouted = resolveModelWithinAllowList({ requested: 'gpt-6-luna', allowedModels: allowed, fallbacks: ['gpt-5.5'] })
     expect(rerouted).toEqual({ status: 'rerouted', model: 'gpt-5.5', rerouted: true, blockedModel: 'gpt-6-luna' })
-    const refused = resolveModelWithinAllowList({ requested: 'gpt-6-luna', allowedModels: allowed, fallbacks: ['claude-4.6'] })
+    const refused = resolveModelWithinAllowList({ requested: 'gpt-6-luna', allowedModels: allowed, fallbacks: ['glm-5'] })
     expect(refused.status).toBe('refused')
     if (refused.status === 'refused') {
       expect(formatModelNotAllowedRefusal({ requested: 'gpt-6-luna', allowedModels: refused.allowedModels }))
-        .toContain('Allowed: glm-5.3, gpt-5.5.')
+        .toContain('Allowed: glm-5.3, glm-5-turbo.')
     }
   })
 })
