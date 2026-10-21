@@ -156,8 +156,8 @@ describe('allow-list utilities (no network)', () => {
     const refusal = 'Model "gpt-6-luna" is not in this key\'s allow-list. Allowed: glm-5.3, glm-5-turbo.'
     const allowed = parseModelNotAllowed(refusal)!
     expect(allowed).toEqual(['glm-5.3', 'glm-5-turbo'])
-    const rerouted = resolveModelWithinAllowList({ requested: 'gpt-6-luna', allowedModels: allowed, fallbacks: ['gpt-5.5'] })
-    expect(rerouted).toEqual({ status: 'rerouted', model: 'gpt-5.5', rerouted: true, blockedModel: 'gpt-6-luna' })
+    const rerouted = resolveModelWithinAllowList({ requested: 'gpt-6-luna', allowedModels: allowed, fallbacks: ['glm-5-turbo'] })
+    expect(rerouted).toEqual({ status: 'rerouted', model: 'glm-5-turbo', rerouted: true, blockedModel: 'gpt-6-luna' })
     const refused = resolveModelWithinAllowList({ requested: 'gpt-6-luna', allowedModels: allowed, fallbacks: ['glm-5'] })
     expect(refused.status).toBe('refused')
     if (refused.status === 'refused') {
