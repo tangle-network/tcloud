@@ -119,7 +119,7 @@ describe('client.systemone — the fleet wire', () => {
 describe('client.keyInfo / allowedModels / resolveModel — the key scope', () => {
   const scopedKey = () => jsonResponse({
     data: {
-      allowed_models: ['zai/glm-5.3', 'gpt-5.5'],
+      allowed_models: ['zai/glm-5.3', 'glm-5-turbo'],
       limit: 50, limit_remaining: 41.5, limit_reset: 'monthly',
       rate_limit: { interval: '1m', requests: 60 },
       expires_at: null,
@@ -131,7 +131,7 @@ describe('client.keyInfo / allowedModels / resolveModel — the key scope', () =
     const info = await makeClient().keyInfo()
     expect(mockFetch.mock.calls[0][0]).toBe('http://router.test/v1/key')
     expect(info).toEqual({
-      allowedModels: ['zai/glm-5.3', 'gpt-5.5'],
+      allowedModels: ['zai/glm-5.3', 'glm-5-turbo'],
       limit: 50, limitRemaining: 41.5, limitReset: 'monthly',
       rateLimitRequests: 60, expiresAt: null,
     })
@@ -156,10 +156,10 @@ describe('client.keyInfo / allowedModels / resolveModel — the key scope', () =
     mockFetch.mockResolvedValue(scopedKey())
     const client = makeClient()
     expect(await client.resolveModel('zai/glm-5.3')).toEqual({ status: 'allowed', model: 'zai/glm-5.3', rerouted: false })
-    expect(await client.resolveModel('gpt-6-luna', { fallbacks: ['kimi-k3', 'gpt-5.5'] }))
-      .toEqual({ status: 'rerouted', model: 'gpt-5.5', rerouted: true, blockedModel: 'gpt-6-luna' })
+    expect(await client.resolveModel('gpt-6-luna', { fallbacks: ['glm-5', 'glm-5-turbo'] }))
+      .toEqual({ status: 'rerouted', model: 'glm-5-turbo', rerouted: true, blockedModel: 'gpt-6-luna' })
     expect(await client.resolveModel('gpt-6-luna'))
-      .toEqual({ status: 'refused', model: null, allowedModels: ['zai/glm-5.3', 'gpt-5.5'] })
+      .toEqual({ status: 'refused', model: null, allowedModels: ['zai/glm-5.3', 'glm-5-turbo'] })
   })
 })
 
@@ -212,8 +212,8 @@ describe('deriveChildBudgetUsd — the live-bisected contract', () => {
 
 describe('allow-list utilities', () => {
   it('parses both router refusal shapes and returns null for unknown shapes', () => {
-    expect(parseModelNotAllowed('Model "gpt-6-luna" is not in this key\'s allow-list. Allowed: glm-5.3, gpt-5.5.'))
-      .toEqual(['glm-5.3', 'gpt-5.5'])
+    expect(parseModelNotAllowed('Model "gpt-6-luna" is not in this key\'s allow-list. Allowed: glm-5.3, glm-5-turbo.'))
+      .toEqual(['glm-5.3', 'glm-5-turbo'])
     expect(parseModelNotAllowed('Fallback model(s) "x" are not in this key\'s allow-list. Allowed: glm-5.3')).toEqual(['glm-5.3'])
     expect(parseModelNotAllowed('unexpected')).toBeNull()
   })
