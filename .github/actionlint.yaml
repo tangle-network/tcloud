@@ -1,2 +1,2 @@
 self-hosted-runner:
-  labels: [ci-public]
+  labels: [ci-public, ci-deploy]

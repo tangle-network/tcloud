@@ -1,0 +1,293 @@
+name: Prepare a qualified npm release
+
+# The runner group permits only this reviewed main workflow body. Package source
+# is an explicitly resolved release tag, proved to be an ancestor of main before
+# executing its tools. Publisher code comes separately from trusted main.
+on:
+  workflow_call:
+    inputs:
+      package:
+        required: true
+        type: string
+      release_tag:
+        required: true
+        type: string
+    outputs:
+      needed:
+        value: ${{ jobs.prepare.outputs.needed }}
+      name:
+        value: ${{ jobs.prepare.outputs.name }}
+      version:
+        value: ${{ jobs.prepare.outputs.version }}
+      sha1:
+        value: ${{ jobs.prepare.outputs.sha1 }}
+      filename:
+        value: ${{ jobs.prepare.outputs.filename }}
+      source_sha:
+        value: ${{ jobs.prepare.outputs.source_sha }}
+      tooling_sha:
+        value: ${{ jobs.prepare.outputs.tooling_sha }}
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: github.repository == 'tangle-network/tcloud'
+    runs-on:
+      group: public-app-production
+      labels: [self-hosted, Linux, X64, ci-deploy]
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: source
+    env:
+      PACKAGE_ID: ${{ inputs.package }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+    outputs:
+      needed: ${{ steps.registry.outputs.needed }}
+      name: ${{ steps.release.outputs.name }}
+      version: ${{ steps.release.outputs.version }}
+      sha1: ${{ steps.artifact.outputs.sha1 }}
+      filename: ${{ steps.package.outputs.filename }}
+      source_sha: ${{ steps.source.outputs.sha }}
+      tooling_sha: ${{ steps.source.outputs.tooling_sha }}
+    steps:
+      # job.workflow_* is the callee identity; github.workflow_* belongs to the caller.
+      # https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#job-context
+      - name: Checkout trusted release tooling
+        id: tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Checkout the selected release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.release_tag }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prove the exact source belongs to main before executing package code
+        id: source
+        env:
+          TOOLING_SHA: ${{ steps.tooling.outputs.commit }}
+        run: |
+          set -euo pipefail
+          case "$PACKAGE_ID" in tcloud|tcloud-agent) ;; *) echo 'Unsupported release package' >&2; exit 1 ;; esac
+          case "$RELEASE_TAG" in "@tangle-network/${PACKAGE_ID}@"*) ;; *) echo 'Unexpected release tag' >&2; exit 1 ;; esac
+          sha="$(git rev-parse HEAD)"
+          tag_sha="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ && "$TOOLING_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$sha" = "$tag_sha"
+          test "$TOOLING_SHA" = "$(git -C ../tooling rev-parse HEAD)"
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git merge-base --is-ancestor "$sha" refs/remotes/origin/main
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "tooling_sha=$TOOLING_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.23.3
+          package-manager-cache: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: source/package.json
+      - name: Match package identity and version to the selected tag
+        id: release
+        run: |
+          set -euo pipefail
+          name="$(node -p "require('./packages/${PACKAGE_ID}/package.json').name")"
+          version="$(node -p "require('./packages/${PACKAGE_ID}/package.json').version")"
+          test "$name" = "@tangle-network/${PACKAGE_ID}"
+          test "$RELEASE_TAG" = "${name}@${version}"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate package dependencies
+        run: node scripts/check-cohort-ranges.mjs
+
+      - name: Build tcloud
+        run: pnpm --filter "@tangle-network/${PACKAGE_ID}..." build
+
+      - name: Test tcloud
+        run: pnpm --filter "@tangle-network/${PACKAGE_ID}" test
+
+      - name: Pack release artifact
+        id: package
+        working-directory: source/packages/${{ inputs.package }}
+        env:
+          PACK_DIR: ${{ runner.temp }}/${{ inputs.package }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PACK_DIR"
+          pnpm pack --pack-destination "$PACK_DIR" > "$RUNNER_TEMP/${PACKAGE_ID}-pack.log"
+
+          mapfile -t tarballs < <(find "$PACK_DIR" -maxdepth 1 -type f -name '*.tgz' -print)
+          if (( ${#tarballs[@]} != 1 )); then
+            echo "Expected one release tarball, found ${#tarballs[@]}" >&2
+            cat "$RUNNER_TEMP/${PACKAGE_ID}-pack.log" >&2
+            exit 1
+          fi
+
+          echo "path=${tarballs[0]}" >> "$GITHUB_OUTPUT"
+          echo "filename=${tarballs[0]##*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect packed artifact
+        id: artifact
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          EXPECTED_NAME: ${{ steps.release.outputs.name }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          node --input-type=module - "$TARBALL_PATH" "$EXPECTED_NAME" "$EXPECTED_VERSION" <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs'
+          import { execFileSync } from 'node:child_process'
+          import { createHash } from 'node:crypto'
+
+          const [tarballPath, expectedName, expectedVersion] = process.argv.slice(2)
+          const manifest = JSON.parse(execFileSync('tar', ['-xOf', tarballPath, 'package/package.json'], { encoding: 'utf8' }))
+          const entries = execFileSync('tar', ['-tzf', tarballPath], { encoding: 'utf8' }).trim().split('\n')
+          const requiredEntries = ['package/package.json', 'package/dist/index.js',
+            expectedName === '@tangle-network/tcloud' ? 'package/dist/cli.js' : 'package/dist/pi-extension.js']
+
+          if (manifest.name !== expectedName || manifest.version !== expectedVersion) {
+            throw new Error(`Packed manifest is ${manifest.name}@${manifest.version}, expected ${expectedName}@${expectedVersion}`)
+          }
+          if (expectedName === '@tangle-network/tcloud' && manifest.bin?.tcloud !== 'dist/cli.js') {
+            throw new Error('Packed manifest does not expose dist/cli.js as the tcloud binary')
+          }
+          for (const entry of requiredEntries) {
+            if (!entries.includes(entry)) throw new Error(`Packed artifact is missing ${entry}`)
+          }
+          if (entries.some((entry) => entry.includes('node_modules'))) {
+            throw new Error('Packed artifact contains node_modules')
+          }
+          if (JSON.stringify(manifest).includes('workspace:')) {
+            throw new Error('Packed manifest contains an unresolved workspace dependency')
+          }
+          if (manifest.publishConfig?.registry && !manifest.publishConfig.registry.includes('registry.npmjs.org')) {
+            throw new Error(`Packed manifest targets ${manifest.publishConfig.registry}`)
+          }
+
+          const sha1 = createHash('sha1').update(readFileSync(tarballPath)).digest('hex')
+          appendFileSync(process.env.GITHUB_OUTPUT, `sha1=${sha1}\n`)
+          console.log(`${expectedName}@${expectedVersion} tarball=${tarballPath} sha1=${sha1} entries=${entries.length}`)
+          NODE
+
+      - name: Bundle inspected bytes with the trusted publisher
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          EXPECTED_NAME: ${{ steps.release.outputs.name }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          EXPECTED_SHA1: ${{ steps.artifact.outputs.sha1 }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          TOOLING_SHA: ${{ steps.source.outputs.tooling_sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/qualified-release"
+          cp "$TARBALL_PATH" "$RUNNER_TEMP/qualified-release/"
+          cp "$GITHUB_WORKSPACE/tooling/scripts/npm-release.mjs" "$RUNNER_TEMP/qualified-release/"
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs'
+          const { SOURCE_SHA: sourceSha, TOOLING_SHA: toolingSha, EXPECTED_NAME: name,
+            EXPECTED_VERSION: version, EXPECTED_SHA1: sha1, RUNNER_TEMP: temp } = process.env
+          writeFileSync(`${temp}/qualified-release/source.json`, JSON.stringify({ sourceSha, toolingSha, name, version, sha1 }) + '\n')
+          console.log(`Qualified source=${sourceSha} tooling=${toolingSha}`)
+          NODE
+
+      - name: Retain inspected release tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.package }}-${{ steps.release.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/qualified-release
+          if-no-files-found: error
+          # Inspected immutable bytes and tooling provenance support release retries.
+          retention-days: 90
+
+      - name: Bundle a clean consumer
+        env:
+          EXPECTED_NAME: ${{ steps.release.outputs.name }}
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          CONSUMER_DIR: ${{ runner.temp }}/${{ inputs.package }}-consumer
+        run: |
+          set -euo pipefail
+          mkdir -p "$CONSUMER_DIR"
+          npm install --prefix "$CONSUMER_DIR" --ignore-scripts \
+            "$TARBALL_PATH" \
+            esbuild@0.28.2
+
+          node --input-type=module - "$CONSUMER_DIR" "$EXPECTED_VERSION" <<'NODE'
+          import { writeFileSync } from 'node:fs'
+          import { readFile } from 'node:fs/promises'
+          import { join } from 'node:path'
+
+          const [consumerDir, expectedVersion] = process.argv.slice(2)
+          const manifest = JSON.parse(await readFile(
+            join(consumerDir, `node_modules/${process.env.EXPECTED_NAME}/package.json`),
+            'utf8',
+          ))
+          if (manifest.version !== expectedVersion) {
+            throw new Error(`Consumer installed ${manifest.version}, expected ${expectedVersion}`)
+          }
+
+          const entry = process.env.EXPECTED_NAME === '@tangle-network/tcloud' ? [
+            "import { TCloudClient } from '@tangle-network/tcloud'",
+            "const client = new TCloudClient({ apiKey: 'consumer-smoke' })",
+            "if (!client) throw new Error('TCloudClient did not initialize')",
+          ] : [
+            "import { TangleToolProvider } from '@tangle-network/tcloud-agent'",
+            "if (typeof TangleToolProvider !== 'function') throw new Error('TangleToolProvider is not exported')",
+          ]
+          writeFileSync(join(consumerDir, 'entry.mjs'), entry.join('\n'))
+          NODE
+
+          "$CONSUMER_DIR/node_modules/.bin/esbuild" \
+            "$CONSUMER_DIR/entry.mjs" \
+            --bundle \
+            --platform=node \
+            --format=esm \
+            --outfile="$CONSUMER_DIR/bundle.mjs"
+          node "$CONSUMER_DIR/bundle.mjs"
+
+      - name: Enforce Agent App dependency age
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          CONSUMER_DIR: ${{ runner.temp }}/${{ inputs.package }}-age-policy-consumer
+        run: |
+          set -euo pipefail
+          mkdir -p "$CONSUMER_DIR"
+          npx --yes pnpm@11.24.0 --dir "$CONSUMER_DIR" init
+          node --input-type=module - "$CONSUMER_DIR" <<'NODE'
+          import { writeFileSync } from 'node:fs'
+          import { join } from 'node:path'
+
+          const [consumerDir] = process.argv.slice(2)
+          writeFileSync(join(consumerDir, 'pnpm-workspace.yaml'), [
+            'packages:',
+            "  - '.'",
+            '',
+            'autoInstallPeers: false',
+            'strictPeerDependencies: true',
+            '',
+            'minimumReleaseAge: 4320',
+            'minimumReleaseAgeStrict: true',
+            'minimumReleaseAgeIgnoreMissingTime: false',
+            'minimumReleaseAgeExclude:',
+            "  - '@tangle-network/*'",
+          ].join('\n'))
+          NODE
+          npx --yes pnpm@11.24.0 --dir "$CONSUMER_DIR" add "$TARBALL_PATH"
+
+      - name: Compare qualified bytes with an existing immutable npm version
+        id: registry
+        env:
+          TARBALL_PATH: ${{ steps.package.outputs.path }}
+          EXPECTED_NAME: ${{ steps.release.outputs.name }}
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          EXPECTED_SHA1: ${{ steps.artifact.outputs.sha1 }}
+        run: node "$GITHUB_WORKSPACE/tooling/scripts/npm-release.mjs"
