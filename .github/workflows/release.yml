@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   prepare:
-    uses: tangle-network/tcloud/.github/workflows/prepare-release.yml@main
+    uses: tangle-network/tcloud/.github/workflows/prepare-release.yml@3d9b157e8e53f8646b3c372fc64425f3f808835b # reviewed preparation body
     permissions:
       contents: read
     with:
