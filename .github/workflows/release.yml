@@ -16,7 +16,83 @@ permissions:
   id-token: write
 
 jobs:
+  publish-check:
+    runs-on: [self-hosted, Linux, X64, ci-public]
+    permissions:
+      contents: read
+    outputs:
+      needed: ${{ steps.registry.outputs.needed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Validate release tag
+        id: release
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          package_name="$(node -p "require('./packages/tcloud/package.json').name")"
+          package_version="$(node -p "require('./packages/tcloud/package.json').version")"
+          expected_tag="${package_name}@${package_version}"
+          checkout_sha="$(git rev-parse HEAD)"
+          tag_sha="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          default_ref="refs/remotes/origin/${DEFAULT_BRANCH}"
+
+          git fetch --no-tags origin "+refs/heads/${DEFAULT_BRANCH}:${default_ref}"
+          default_sha="$(git rev-parse "$default_ref")"
+
+          if [[ "$package_name" != '@tangle-network/tcloud' ]]; then
+            echo "Unexpected package name: $package_name" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
+            echo "Release tag $RELEASE_TAG does not match $expected_tag" >&2
+            exit 1
+          fi
+          if [[ "$tag_sha" != "$checkout_sha" ]]; then
+            echo "Tag $RELEASE_TAG points to $tag_sha, checked out $checkout_sha" >&2
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$checkout_sha" "$default_ref"; then
+            echo "Release commit $checkout_sha is not on ${default_ref} at $default_sha" >&2
+            exit 1
+          fi
+
+          {
+            echo "name=$package_name"
+            echo "version=$package_version"
+            echo "tag=$RELEASE_TAG"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release $RELEASE_TAG is $checkout_sha"
+
+      - name: Start a hosted runner only for an unpublished npm version
+        id: registry
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs'
+          const { name, version } = JSON.parse(readFileSync('packages/tcloud/package.json', 'utf8'))
+          const url = `https://registry.npmjs.org/${encodeURIComponent(name).replace('%40', '@')}/${encodeURIComponent(version)}`
+          const response = await fetch(url, { signal: AbortSignal.timeout(15000) })
+          if (response.status !== 404 && !response.ok) throw new Error(`npm returned HTTP ${response.status}`)
+          if (response.ok) {
+            const published = await response.json()
+            if (published.name !== name || published.version !== version) throw new Error('Unexpected registry version')
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `needed=${response.status === 404}\n`)
+          NODE
+
   publish:
+    needs: publish-check
+    if: needs.publish-check.outputs.needed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
@@ -157,6 +233,7 @@ jobs:
           name: tcloud-${{ steps.release.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.package.outputs.path }}
           if-no-files-found: error
+          # Inspected immutable bytes support release retry and provenance reconciliation.
           retention-days: 90
 
       - name: Bundle a clean consumer
