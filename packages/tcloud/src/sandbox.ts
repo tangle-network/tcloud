@@ -160,6 +160,18 @@ export class TCloudSandbox {
     })
   }
 
+  /**
+   * The underlying SDK-compatible client (#44): the full
+   * `SandboxClient` shape (`create(options?: CreateSandboxOptions)`) that
+   * agent-runtime's `runLoop` and SDK-native code expect — already
+   * authenticated to the sandbox gateway. `TCloudSandbox.create` remains the
+   * convenience wrapper (attestation policy + TEE fallbacks); this exposes
+   * the raw surface for callers that need complete `CreateSandboxOptions`.
+   */
+  sdkClient(): Sandbox {
+    return this.client
+  }
+
   async create(options: TCloudSandboxCreateOptions): Promise<TCloudSandboxCreateResult> {
     const effectiveVerify = shouldVerifyAttestation(options)
     const attestationPolicy = buildAttestationPolicy(options)
