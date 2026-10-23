@@ -45,7 +45,8 @@ jobs:
       - name: Download the inspected release tarball
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: tcloud-${{ needs.prepare.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # Successful preparation may belong to an earlier run attempt.
+          artifact-ids: ${{ needs.prepare.outputs.artifact_id }}
           path: ${{ runner.temp }}/qualified-release
       - name: Install release npm
         run: npm install --global npm@12.1.0 --registry=https://registry.npmjs.org
