@@ -126,6 +126,16 @@ npx @tangle-network/tcloud credits balance           # check credits
 
 Do not install or execute the unscoped `tcloud` npm package. It is unrelated to Tangle.
 
+## Local SDK qualification
+
+Automatic PR verification of the SDK is retired. Merge the current default branch and qualify the affected SDK surface through the maintained admitted gate. The gate installs every workspace importer from the frozen pnpm lockfile; this comprehensive reference retains the previous build/test/package checks:
+
+```bash
+beelink-gate auto https://github.com/tangle-network/tcloud.git <full-sha> -- bash -lc 'set -euo pipefail; git diff --exit-code -- pnpm-lock.yaml; pnpm --filter "@tangle-network/tcloud..." run build; pnpm --filter @tangle-network/tcloud test; packs=$(mktemp -d -t tcloud-qualified-packs.XXXXXX); pnpm --dir packages/tcloud pack --pack-destination "$packs"; printf "Inspected local package directory: %s\n" "$packs"'
+```
+
+The workspace/package manifests own the package manager, runtime requirements and check commands. Build precedes tests and packing. Workflow/docs-only changes use YAML, actionlint, content/link and exact-diff checks. The two tagged publishers and their immutable shared preparation workflow are unchanged; publication still consumes its inspected exact tarball. Local packing does not publish or authorize model requests, live TEE resources or payment operations. The opt-in live proof below retains its separate authorization and cleanup requirements.
+
 ## Live TEE E2E
 
 The TEE sandbox path has an opt-in live test because it creates real cloud/operator resources.
