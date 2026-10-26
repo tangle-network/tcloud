@@ -173,8 +173,8 @@ importers:
   packages/tcloud:
     dependencies:
       '@tangle-network/sandbox':
-        specifier: '>=0.58.4 <0.65.0'
-        version: 0.64.0(openai@6.40.0(ws@8.21.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))
+        specifier: '>=0.58.4 <1.0.0'
+        version: 0.68.3(openai@6.40.0(ws@8.21.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))
       '@tangle-network/tcloud-attestation':
         specifier: workspace:^
         version: link:../tcloud-attestation
@@ -938,8 +938,8 @@ packages:
       viem:
         optional: true
 
-  '@tangle-network/sandbox@0.64.0':
-    resolution: {integrity: sha512-5TH83yQdbdKKxsraUKv326yPNafwXMsiHtJ6ZQfSw2/7Yc/nTYWCsP0flHKKWdC7mXIdY3jL9yMtgCYdnE1uYw==}
+  '@tangle-network/sandbox@0.68.3':
+    resolution: {integrity: sha512-gx4JfMOQvinyOUItnGSjzQzxcxnNh7Ae83tLnvG+leo+CpuAEgkhf8F7ccoKO077V7Ej4X/fC8QEtXudPdQ1oQ==}
     peerDependencies:
       '@mastra/core': ^1.36.0
       '@modelcontextprotocol/sdk': ^1.30.0
@@ -2051,6 +2051,9 @@ packages:
   zod@4.6.5:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
 
+  zod@4.6.6:
+    resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
+
 snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
@@ -2656,12 +2659,12 @@ snapshots:
       openai: 6.40.0(ws@8.22.0)(zod@4.5.4)
       viem: 2.56.9(typescript@7.0.2)(zod@4.5.4)
 
-  '@tangle-network/sandbox@0.64.0(openai@6.40.0(ws@8.21.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))':
+  '@tangle-network/sandbox@0.68.3(openai@6.40.0(ws@8.21.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))':
     dependencies:
       '@tangle-network/agent-core': 0.11.0
       '@tangle-network/agent-interface': 4.0.0
       tar-stream: 3.2.1
-      zod: 4.6.5
+      zod: 4.6.6
     optionalDependencies:
       openai: 6.40.0(ws@8.21.0)(zod@4.5.4)
       viem: 2.56.9(typescript@7.0.2)(zod@4.5.4)
@@ -3584,3 +3587,5 @@ snapshots:
   zod@4.5.4: {}
 
   zod@4.6.5: {}
+
+  zod@4.6.6: {}
