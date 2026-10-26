@@ -16,7 +16,9 @@ async function cliHelp(command: string): Promise<string> {
   return stdout
 }
 
-describe('tcloud CLI version', () => {
+// Each case starts the CLI under tsx, which the 20 s exec timeout allows for; a
+// loaded host takes longer than vitest's 5 s default to start it.
+describe('tcloud CLI version', { timeout: 30_000 }, () => {
   it('uses package metadata instead of a hardcoded version', async () => {
     const source = await readFile(resolve('src/cli.ts'), 'utf-8')
 

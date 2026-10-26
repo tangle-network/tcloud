@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.5
+
+- Accept every Sandbox 0.x release from 0.58.4 (`>=0.58.4 <1.0.0`). tcloud uses only the `Sandbox` client, `create` and the re-exported `AgentProfile*` types, and a range that ended at the next Sandbox minor held every consumer below Sandbox 0.65 until tcloud released again. A consumer now installs tcloud next to Sandbox 0.68 without a second Sandbox copy; its own typecheck covers each later Sandbox minor.
+
 ## 0.8.4
 
 - Accept Sandbox 0.61 through 0.64 (`>=0.58.4 <0.65.0`). Sandbox 0.64.0 carries `backend.metadata.isolationPrincipal`, which keeps one UID, HOME and OpenCode session per session and member, so a consumer on 0.64 can install tcloud without a second Sandbox copy. tcloud's Sandbox surface (the `Sandbox` client, `create`, and the re-exported `AgentProfile*` types) is unchanged in 0.64.0.
