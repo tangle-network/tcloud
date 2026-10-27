@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.6
+
+- Move the SDK and `@tangle-network/tcloud-agent` 0.5.0 to Sandbox 1.x (`^1.0.15`). Agent App 0.63.67 and Agent Runtime 1.0.0 peer Sandbox `^1`, so the `<1.0.0` range gave every app a second Sandbox copy or an override. tcloud's Sandbox surface (the `Sandbox` client, `create`, and the re-exported `AgentProfile*` types) typechecks unchanged against 1.0.15.
+
 ## 0.8.5
 
 - Accept every Sandbox 0.x release from 0.58.4 (`>=0.58.4 <1.0.0`). tcloud uses only the `Sandbox` client, `create` and the re-exported `AgentProfile*` types, and a range that ended at the next Sandbox minor held every consumer below Sandbox 0.65 until tcloud released again. A consumer now installs tcloud next to Sandbox 0.68 without a second Sandbox copy; its own typecheck covers each later Sandbox minor.
