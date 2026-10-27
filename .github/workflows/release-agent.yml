@@ -3,7 +3,8 @@ name: Release @tangle-network/tcloud-agent
 # Same release contract as release.yml, for the agent package. npm trusted
 # publishing is configured per package and per workflow file, so the npm
 # package settings for @tangle-network/tcloud-agent must list this repository
-# and `release-agent.yml` before a tag can publish.
+# and `release-agent.yml` before a tokenless publish works. Until then the
+# NPM_TOKEN repository secret publishes the same qualified bytes.
 
 on:
   push:
@@ -56,6 +57,10 @@ jobs:
       - name: Install release npm
         run: npm install --global npm@12.1.0 --registry=https://registry.npmjs.org
       # Trusted publication is the only job requiring a GitHub-hosted runner.
+      # It is tried first with no token in the npm config. Only when it fails does the same qualified
+      # script run again with the NPM_TOKEN repository secret, which lets the package ship while it has
+      # no registered trusted publisher. A token in the npm config takes precedence over the id-token
+      # exchange, so it is written only after the tokenless attempt.
       - name: Publish and verify the exact qualified npm artifact
         env:
           TARBALL_PATH: ${{ runner.temp }}/qualified-release/${{ needs.prepare.outputs.filename }}
@@ -63,4 +68,15 @@ jobs:
           EXPECTED_VERSION: ${{ needs.prepare.outputs.version }}
           EXPECTED_SHA1: ${{ needs.prepare.outputs.sha1 }}
           ALLOW_PUBLISH: 'true'
-        run: node "$RUNNER_TEMP/qualified-release/npm-release.mjs"
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if node "$RUNNER_TEMP/qualified-release/npm-release.mjs"; then
+            exit 0
+          fi
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo '::error::Trusted publishing failed and the NPM_TOKEN repository secret is not set.'
+            exit 1
+          fi
+          echo 'Trusted publishing unavailable: publishing with the NPM_TOKEN fallback.'
+          npm config set --location=user //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+          node "$RUNNER_TEMP/qualified-release/npm-release.mjs"
