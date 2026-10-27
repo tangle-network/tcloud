@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@sinclair/typebox": "^0.34.52",
-    "@tangle-network/sandbox": ">=0.55.3 <0.56.0",
+    "@tangle-network/sandbox": "^1.0.15",
     "@tangle-network/tcloud": "workspace:^",
     "viem": "^2.56.9"
   },
