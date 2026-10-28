@@ -51,6 +51,11 @@ jobs:
       - name: Install release npm
         run: npm install --global npm@12.1.0 --registry=https://registry.npmjs.org
       # Trusted publication is the only job requiring a GitHub-hosted runner.
+      - name: Admit the release version
+        uses: tangle-network/agent-runtime/.github/actions/admit-release@76b8de28191e31f0c1301a3621bab2188f8695e7
+        with:
+          tarballs: ${{ runner.temp }}/qualified-release/${{ needs.prepare.outputs.filename }}
+
       - name: Publish and verify the exact qualified npm artifact
         env:
           TARBALL_PATH: ${{ runner.temp }}/qualified-release/${{ needs.prepare.outputs.filename }}
