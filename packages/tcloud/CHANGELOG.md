@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0
+
+- First stable release, the same code as the last 0.x release. Later compatible changes ship as patch releases ([release versioning](https://github.com/tangle-network/agent-runtime/blob/main/docs/release-versioning.md)).
+
 ## 0.8.6
 
 - Move the SDK and `@tangle-network/tcloud-agent` 0.5.0 to Sandbox 1.x (`^1.0.15`). Agent App 0.63.67 and Agent Runtime 1.0.0 peer Sandbox `^1`, so the `<1.0.0` range gave every app a second Sandbox copy or an override. tcloud's Sandbox surface (the `Sandbox` client, `create`, and the re-exported `AgentProfile*` types) typechecks unchanged against 1.0.15.
