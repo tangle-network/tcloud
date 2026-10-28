@@ -61,6 +61,11 @@ jobs:
       # script run again with the NPM_TOKEN repository secret, which lets the package ship while it has
       # no registered trusted publisher. A token in the npm config takes precedence over the id-token
       # exchange, so it is written only after the tokenless attempt.
+      - name: Admit the release version
+        uses: tangle-network/agent-runtime/.github/actions/admit-release@76b8de28191e31f0c1301a3621bab2188f8695e7
+        with:
+          tarballs: ${{ runner.temp }}/qualified-release/${{ needs.prepare.outputs.filename }}
+
       - name: Publish and verify the exact qualified npm artifact
         env:
           TARBALL_PATH: ${{ runner.temp }}/qualified-release/${{ needs.prepare.outputs.filename }}
