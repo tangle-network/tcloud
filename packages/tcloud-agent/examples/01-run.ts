@@ -11,7 +11,7 @@
  */
 
 import { TCloud } from '@tangle-network/tcloud'
-import type { AgentProfile } from '@tangle-network/sandbox'
+import type { AgentProfile } from '@tangle-network/agent-interface'
 import { agent } from '../src/agent-runner'
 
 const profile: AgentProfile = {

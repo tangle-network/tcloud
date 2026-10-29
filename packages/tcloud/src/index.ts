@@ -262,7 +262,7 @@ export type {
   TeeType,
 } from '@tangle-network/tcloud-attestation'
 
-// Re-export agent profile types from sandbox SDK
+// Agent profile types, from their owner @tangle-network/agent-interface
 export type {
   AgentProfile,
   AgentProfilePrompt,
@@ -273,10 +273,10 @@ export type {
   AgentProfileCapabilities,
   // Subagents the harness can dispatch — same shape physim's specialist
   // dispatcher consumes. Re-export keeps callers on tcloud as the single
-  // entry point instead of pulling sandbox in directly.
+  // entry point.
   AgentSubagentProfile,
   AgentProfileFileMount,
   AgentProfileResourceRef,
   AgentProfileValidationResult,
   AgentProfileValidationIssue,
-} from '@tangle-network/sandbox'
+} from '@tangle-network/agent-interface'

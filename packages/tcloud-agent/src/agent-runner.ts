@@ -48,7 +48,8 @@
  *   thrown out of the iterable (same contract as `run()`).
  */
 
-import type { AgentProfile, PromptOptions, PromptResult, SandboxEvent, SandboxInstance } from '@tangle-network/sandbox'
+import type { AgentProfile } from '@tangle-network/agent-interface'
+import type { PromptOptions, PromptResult, SandboxEvent, SandboxInstance } from '@tangle-network/sandbox'
 import { TCloudClient, type ChatCompletion, type ChatCompletionChunk, type ChatMessage, type ChatOptions } from '@tangle-network/tcloud'
 
 // ── Part types (wrappers over the sandbox SDK session-gateway shape) ─────────
