@@ -1,6 +1,6 @@
 /** Core types for the tcloud SDK */
 
-import type { AgentProfile } from '@tangle-network/sandbox'
+import type { AgentProfile } from '@tangle-network/agent-interface'
 
 export interface TCloudConfig {
   /** API base URL (default: https://router.tangle.tools/v1) */

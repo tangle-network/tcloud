@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- Import the `AgentProfile*` types from their owner, `@tangle-network/agent-interface` (now a direct dependency), instead of the Sandbox SDK, which is removing its compatibility re-export. The re-exported names and shapes are unchanged. tcloud-agent 1.0.1 does the same.
+
 ## 1.0.0
 
 - First stable release, the same code as the last 0.x release. Later compatible changes ship as patch releases ([release versioning](https://github.com/tangle-network/agent-runtime/blob/main/docs/release-versioning.md)).

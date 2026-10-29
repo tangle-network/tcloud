@@ -290,7 +290,7 @@ const result = await agent(client, {
 ### Example 6: Inline `AgentProfile`
 
 ```ts
-import type { AgentProfile } from '@tangle-network/sandbox'
+import type { AgentProfile } from '@tangle-network/agent-interface'
 
 const profile: AgentProfile = {
   name: 'one-off-reviewer',

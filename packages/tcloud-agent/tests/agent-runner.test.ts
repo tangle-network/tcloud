@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { AgentProfile } from '@tangle-network/sandbox'
+import type { AgentProfile } from '@tangle-network/agent-interface'
 import type { ChatCompletion, ChatCompletionChunk } from '@tangle-network/tcloud'
 import {
   Agent,

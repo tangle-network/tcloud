@@ -26,7 +26,7 @@
  */
 
 import { TCloudClient } from '@tangle-network/tcloud'
-import type { AgentProfile } from '@tangle-network/sandbox'
+import type { AgentProfile } from '@tangle-network/agent-interface'
 
 const direct = process.argv.includes('--direct')
 

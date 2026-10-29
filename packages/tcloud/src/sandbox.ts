@@ -1,4 +1,5 @@
-import { Sandbox, type AgentProfile } from '@tangle-network/sandbox'
+import type { AgentProfile } from '@tangle-network/agent-interface'
+import { Sandbox } from '@tangle-network/sandbox'
 
 /**
  * GPU / accelerator request, mirroring `@tangle-network/sandbox`'s
