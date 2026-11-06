@@ -1,4 +1,3 @@
-/** ShieldedCredits signing and private inference. */
 import { privateKeyToAccount } from 'viem/accounts'
 import { keccak256, encodeAbiParameters, parseAbiParameters, type Hex } from 'viem'
 import { TCloudClient } from './client'
@@ -45,17 +44,12 @@ export function buildSpendAuthMessage(
 }
 
 export interface ShieldedWallet {
-  /** Ephemeral spending private key (hex) */
   privateKey: Hex
-  /** Derived address */
   address: string
-  /** Credit account commitment */
   commitment: Hex
-  /** Random salt */
   salt: Hex
 }
 
-/** Generate a new ephemeral shielded wallet */
 export function generateWallet(): ShieldedWallet {
   const privateKeyBytes = crypto.getRandomValues(new Uint8Array(32))
   const privateKey = ('0x' + Array.from(privateKeyBytes).map(b => b.toString(16).padStart(2, '0')).join('')) as Hex
@@ -73,7 +67,6 @@ export function generateWallet(): ShieldedWallet {
   return { privateKey, address: account.address, commitment, salt }
 }
 
-/** Sign a SpendAuth for a request */
 export async function signSpendAuth(
   wallet: ShieldedWallet,
   params: {
@@ -127,10 +120,7 @@ interface BalanceMonitor {
   replenishing: boolean
 }
 
-/**
- * Create a shielded TCloudClient that signs SpendAuth automatically.
- * Every request is anonymous — no API key, no identity.
- */
+/** Create a client that signs SpendAuth automatically. */
 export function createShieldedClient(config: TCloudConfig & {
   wallet?: ShieldedWallet
   operatorAddress?: Hex
@@ -169,7 +159,6 @@ export function createShieldedClient(config: TCloudConfig & {
     })
   })
 
-  // Auto-replenish: lightweight balance polling + relayer/direct funding
   const monitor: BalanceMonitor = { lastBalance: 0n, timer: null, replenishing: false }
 
   if (config.autoReplenish) {
@@ -222,7 +211,6 @@ export function createShieldedClient(config: TCloudConfig & {
   return Object.assign(client, { wallet, stopAutoReplenish })
 }
 
-// Helpers for auto-replenish (inline to avoid cross-package dependency on tangle-ai-cloud)
 
 const GET_ACCOUNT_ABI = [{
   type: 'function' as const,
