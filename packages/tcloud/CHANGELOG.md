@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.3
+
+- Export the ShieldedCredits typed-data contract for Router and inference-bazaar; signing and serialized payment headers remain compatible.
+
 ## 1.0.2
 
 - Forward `gpuLease` spend and lifetime settings when creating a GPU sandbox. Accelerator and lease types come from the Sandbox SDK.

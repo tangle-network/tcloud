@@ -1,10 +1,4 @@
-/**
- * tcloud/shielded — Ephemeral wallet generation, SpendAuth signing, private inference.
- *
- * import { TCloud } from 'tcloud'
- * const client = TCloud.shielded()  // anonymous, no API key
- */
-
+/** ShieldedCredits signing and private inference. */
 import { privateKeyToAccount } from 'viem/accounts'
 import { keccak256, encodeAbiParameters, parseAbiParameters, type Hex } from 'viem'
 import { TCloudClient } from './client'
