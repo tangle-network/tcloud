@@ -5,22 +5,49 @@
  * const client = TCloud.shielded()  // anonymous, no API key
  */
 
-import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts'
-import { keccak256, encodeAbiParameters, parseAbiParameters, concat, toBytes, type Hex } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
+import { keccak256, encodeAbiParameters, parseAbiParameters, type Hex } from 'viem'
 import { TCloudClient } from './client'
 import type { TCloudConfig, SpendAuth } from './types'
 
 export { type SpendAuth } from './types'
 
-const SPEND_TYPEHASH = keccak256(
-  toBytes(
-    'SpendAuthorization(bytes32 commitment,uint64 serviceId,uint8 jobIndex,uint256 amount,address operator,uint256 nonce,uint64 expiry)'
-  )
-)
+export const SHIELDED_CREDITS_DOMAIN = { name: 'ShieldedCredits', version: '1' } as const
+export const SPEND_AUTH_TYPES = {
+  SpendAuthorization: [
+    { name: 'commitment', type: 'bytes32' },
+    { name: 'serviceId', type: 'uint64' },
+    { name: 'jobIndex', type: 'uint8' },
+    { name: 'amount', type: 'uint256' },
+    { name: 'operator', type: 'address' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'expiry', type: 'uint64' },
+  ],
+} as const
 
-const DEFAULT_DOMAIN = {
-  name: 'ShieldedCredits',
-  version: '1',
+/** Signed values use bigint; SpendAuth is their JSON wire representation. */
+export interface SpendAuthPayload {
+  commitment: string
+  serviceId: bigint
+  jobIndex: number
+  amount: bigint
+  operator: string
+  nonce: bigint
+  expiry: bigint
+  signature: string
+}
+
+export function buildSpendAuthMessage(
+  params: Omit<SpendAuthPayload, 'signature'>, chainId: number, contractAddress: string,
+) {
+  return {
+    domain: { ...SHIELDED_CREDITS_DOMAIN, chainId, verifyingContract: contractAddress as Hex },
+    types: SPEND_AUTH_TYPES,
+    primaryType: 'SpendAuthorization' as const,
+    message: { commitment: params.commitment as Hex, serviceId: params.serviceId,
+      jobIndex: params.jobIndex, amount: params.amount, operator: params.operator as Hex,
+      nonce: params.nonce, expiry: params.expiry },
+  }
 }
 
 export interface ShieldedWallet {
@@ -68,40 +95,9 @@ export async function signSpendAuth(
 ): Promise<SpendAuth> {
   const account = privateKeyToAccount(wallet.privateKey)
 
-  const domainSeparator = keccak256(
-    encodeAbiParameters(
-      parseAbiParameters('bytes32, bytes32, bytes32, uint256, address'),
-      [
-        keccak256(toBytes('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)')),
-        keccak256(toBytes(DEFAULT_DOMAIN.name)),
-        keccak256(toBytes(DEFAULT_DOMAIN.version)),
-        BigInt(params.chainId),
-        params.creditsAddress,
-      ]
-    )
-  )
-
-  const structHash = keccak256(
-    encodeAbiParameters(
-      parseAbiParameters('bytes32, bytes32, uint64, uint8, uint256, address, uint256, uint64'),
-      [
-        SPEND_TYPEHASH,
-        wallet.commitment,
-        params.serviceId,
-        params.jobIndex,
-        params.amount,
-        params.operator,
-        params.nonce,
-        params.expiry,
-      ]
-    )
-  )
-
-  const digest = keccak256(
-    concat([toBytes('0x1901' as Hex), toBytes(domainSeparator), toBytes(structHash)])
-  )
-
-  const signature = await account.sign({ hash: digest })
+  const signature = await account.signTypedData(buildSpendAuthMessage(
+    { ...params, commitment: wallet.commitment }, params.chainId, params.creditsAddress,
+  ))
 
   return {
     commitment: wallet.commitment,
