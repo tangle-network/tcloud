@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4
+
+- Accept the local spending key and commitment for signing; complete generated wallets remain supported.
+
 ## 1.0.3
 
 - Export the ShieldedCredits typed-data contract for Router and inference-bazaar; signing and serialized payment headers remain compatible.

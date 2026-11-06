@@ -25,7 +25,8 @@ describe('published ShieldedCredits signing contract', () => {
       params.commitment, params.serviceId, params.jobIndex, params.amount, params.operator, params.nonce, params.expiry,
     ]))
     expect(hashTypedData(typed)).toBe(keccak256(concat(['0x1901', domain, struct])))
-    const signed = await signSpendAuth(wallet, { ...params, chainId, creditsAddress })
+    const signed = await signSpendAuth({ privateKey: wallet.privateKey, commitment: wallet.commitment }, { ...params, chainId, creditsAddress })
+    expect(await signSpendAuth(wallet, { ...params, chainId, creditsAddress })).toEqual(signed)
     const wire = JSON.parse(JSON.stringify(signed))
     expect(wire).toEqual({ ...params, serviceId: '7', amount: '1500000', nonce: '42', expiry: '1900000000', signature: signed.signature })
     const rehydrated = { ...wire, serviceId: BigInt(wire.serviceId), amount: BigInt(wire.amount), nonce: BigInt(wire.nonce), expiry: BigInt(wire.expiry) }

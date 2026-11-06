@@ -68,7 +68,7 @@ export function generateWallet(): ShieldedWallet {
 }
 
 export async function signSpendAuth(
-  wallet: ShieldedWallet,
+  wallet: Pick<ShieldedWallet, 'privateKey' | 'commitment'>,
   params: {
     serviceId: bigint
     jobIndex: number
