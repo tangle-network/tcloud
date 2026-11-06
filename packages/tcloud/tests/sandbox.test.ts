@@ -1,5 +1,7 @@
+import { once } from 'node:events'
+import { createServer } from 'node:http'
 import { describe, expect, it } from 'vitest'
-import { buildSandboxCreateOptions, shouldVerifyAttestation } from '../src/sandbox'
+import { buildSandboxCreateOptions, shouldVerifyAttestation, TCloudSandbox } from '../src/sandbox'
 
 describe('tcloud sandbox facade', () => {
   it('maps tcloud options to sandbox create options', () => {
@@ -48,22 +50,35 @@ describe('tcloud sandbox facade', () => {
     })
   })
 
-  it('forwards a GPU accelerator request into resources.accelerator', () => {
-    const options = buildSandboxCreateOptions({
-      accelerator: { kind: 'nvidia-a100', count: 1, memoryMB: 40960 },
-    })
-    expect(options.resources).toEqual({
-      cpuCores: undefined,
-      memoryMB: undefined,
-      diskGB: undefined,
-      accelerator: { kind: 'nvidia-a100', count: 1, memoryMB: 40960 },
-    })
-  })
-
-  it('emits a resources block when ONLY an accelerator is requested', () => {
-    const options = buildSandboxCreateOptions({ accelerator: { kind: 'nvidia-h100' } })
-    expect(options.resources).toBeDefined()
-    expect(options.resources.accelerator).toEqual({ kind: 'nvidia-h100' })
+  it('sends the GPU lease budget and accelerator through the Sandbox HTTP API', async () => {
+    const accelerator = { kind: 'nvidia-a100', count: 1, memoryMB: 40960 }
+    const gpuLease = { provider: 'runpod' as const, maxSpendUsd: 1, maxLifetimeSeconds: 300 }
+    const received: unknown[] = []
+    const server = createServer(async (req, res) => {
+      let raw = ''
+      for await (const chunk of req) raw += chunk
+      const body = JSON.parse(raw)
+      received.push({ path: req.url, authorization: req.headers.authorization, body })
+      res.setHeader('Content-Type', 'application/json')
+      res.statusCode = body.gpuLease ? 201 : 400
+      res.end(JSON.stringify(body.gpuLease
+        ? { id: 'gpu-proof', status: 'running', metadata: {} }
+        : { error: 'GPU lease options required', code: 'GPU_LEASE_OPTIONS_REQUIRED' }))
+    }).listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const address = server.address() as { port: number }
+    try {
+      const client = new TCloudSandbox({ apiKey: 'local-proof', baseUrl: `http://127.0.0.1:${address.port}` })
+      const result = await client.create({ accelerator, gpuLease })
+      expect((result.sandbox as { id: string }).id).toBe('gpu-proof')
+      expect(received).toEqual([expect.objectContaining({
+        path: '/v1/sandboxes', authorization: 'Bearer local-proof',
+        body: expect.objectContaining({ resources: expect.objectContaining({ accelerator }), gpuLease }),
+      })])
+    } finally {
+      server.closeAllConnections()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
   })
 
   it('omits resources when neither cpu/mem/disk nor accelerator is set', () => {
