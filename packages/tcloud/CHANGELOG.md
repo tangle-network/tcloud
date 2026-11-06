@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2
+
+- Forward `gpuLease` spend and lifetime settings when creating a GPU sandbox. Accelerator and lease types come from the Sandbox SDK.
+
 ## 1.0.1
 
 - Import the `AgentProfile*` types from their owner, `@tangle-network/agent-interface` (now a direct dependency), instead of the Sandbox SDK, which is removing its compatibility re-export. The re-exported names and shapes are unchanged. tcloud-agent 1.0.1 does the same.
