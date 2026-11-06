@@ -177,7 +177,7 @@ importers:
         version: 5.9.0
       '@tangle-network/sandbox':
         specifier: ^1.0.15
-        version: 1.0.15(openai@6.40.0(ws@8.21.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))
+        version: 1.0.15(openai@6.40.0(ws@8.21.0)(zod@4.6.7))(viem@2.56.9(typescript@7.0.2)(zod@4.6.7))
       '@tangle-network/tcloud-attestation':
         specifier: workspace:^
         version: link:../tcloud-attestation
@@ -186,7 +186,7 @@ importers:
         version: 15.0.0
       viem:
         specifier: ^2.56.9
-        version: 2.56.9(typescript@7.0.2)(zod@4.5.4)
+        version: 2.56.9(typescript@7.0.2)(zod@4.6.7)
     devDependencies:
       '@types/node':
         specifier: ^26.6.3
@@ -217,17 +217,17 @@ importers:
         version: 5.9.0
       '@tangle-network/sandbox':
         specifier: ^1.0.15
-        version: 1.0.15(openai@6.40.0(ws@8.22.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))
+        version: 1.0.15(openai@6.40.0(ws@8.22.0)(zod@4.6.7))(viem@2.56.9(typescript@7.0.2)(zod@4.6.7))
       '@tangle-network/tcloud':
         specifier: workspace:^
         version: link:../tcloud
       viem:
         specifier: ^2.56.9
-        version: 2.56.9(typescript@7.0.2)(zod@4.5.4)
+        version: 2.56.9(typescript@7.0.2)(zod@4.6.7)
     devDependencies:
       '@earendil-works/pi-coding-agent':
         specifier: ^0.87.1
-        version: 0.87.1(ws@8.22.0)(zod@4.5.4)
+        version: 0.87.1(ws@8.22.0)(zod@4.6.7)
       '@types/node':
         specifier: ^26.6.3
         version: 26.6.3
@@ -2020,22 +2020,19 @@ packages:
   yuku-parser@0.10.2:
     resolution: {integrity: sha512-CgaU0/PPjCAIEZ3WQroosOxTY3eeKldAN3h+vk8pMNz4+jl1CZzBR4pW+K/rRPF112VooCL5FdjJoiMNjDrL2A==}
 
-  zod@4.5.4:
-    resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
-
-  zod@4.6.6:
-    resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
 snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@anthropic-ai/sdk@0.124.0(zod@4.5.4)':
+  '@anthropic-ai/sdk@0.124.0(zod@4.6.7)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.1.1
     optionalDependencies:
-      zod: 4.5.4
+      zod: 4.6.7
 
   '@aws-sdk/client-bedrock-runtime@3.1127.0':
     dependencies:
@@ -2225,10 +2222,10 @@ snapshots:
     dependencies:
       esbuild: 0.28.2
 
-  '@earendil-works/pi-agent-core@0.87.1(ws@8.22.0)(zod@4.5.4)':
+  '@earendil-works/pi-agent-core@0.87.1(ws@8.22.0)(zod@4.6.7)':
     dependencies:
       '@earendil-works/chord': 0.87.1
-      '@earendil-works/pi-ai': 0.87.1(ws@8.22.0)(zod@4.5.4)
+      '@earendil-works/pi-ai': 0.87.1(ws@8.22.0)(zod@4.6.7)
       '@earendil-works/pi-telemetry': 0.87.1
       diff: 8.0.4
       ignore: 7.0.8
@@ -2243,16 +2240,16 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.87.1(ws@8.22.0)(zod@4.5.4)':
+  '@earendil-works/pi-ai@0.87.1(ws@8.22.0)(zod@4.6.7)':
     dependencies:
-      '@anthropic-ai/sdk': 0.124.0(zod@4.5.4)
+      '@anthropic-ai/sdk': 0.124.0(zod@4.6.7)
       '@aws-sdk/client-bedrock-runtime': 3.1127.0
       '@earendil-works/pi-telemetry': 0.87.1
       '@google/genai': 2.21.0
       '@smithy/node-http-handler': 4.12.1
       http-proxy-agent: 9.1.0
       https-proxy-agent: 9.1.0
-      openai: 6.40.0(ws@8.22.0)(zod@4.5.4)
+      openai: 6.40.0(ws@8.22.0)(zod@4.6.7)
       partial-json: 0.1.7
       typebox: 1.3.27
     transitivePeerDependencies:
@@ -2264,11 +2261,11 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-coding-agent@0.87.1(ws@8.22.0)(zod@4.5.4)':
+  '@earendil-works/pi-coding-agent@0.87.1(ws@8.22.0)(zod@4.6.7)':
     dependencies:
       '@earendil-works/chord': 0.87.1
-      '@earendil-works/pi-agent-core': 0.87.1(ws@8.22.0)(zod@4.5.4)
-      '@earendil-works/pi-ai': 0.87.1(ws@8.22.0)(zod@4.5.4)
+      '@earendil-works/pi-agent-core': 0.87.1(ws@8.22.0)(zod@4.6.7)
+      '@earendil-works/pi-ai': 0.87.1(ws@8.22.0)(zod@4.6.7)
       '@earendil-works/pi-tui': 0.87.1
       '@silvia-odwyer/photon-node': 0.3.4
       chalk: 6.0.0
@@ -2601,41 +2598,41 @@ snapshots:
     dependencies:
       '@tangle-network/agent-interface': 5.9.0
       '@tangle-network/agent-trace-contract': 2.2.0
-      zod: 4.6.6
+      zod: 4.6.7
 
   '@tangle-network/agent-interface@5.9.0':
     dependencies:
       '@noble/hashes': 2.4.0
       spdx-expression-parse: 5.0.0
-      zod: 4.6.6
+      zod: 4.6.7
 
   '@tangle-network/agent-trace-contract@2.2.0': {}
 
-  '@tangle-network/sandbox@1.0.15(openai@6.40.0(ws@8.21.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))':
+  '@tangle-network/sandbox@1.0.15(openai@6.40.0(ws@8.21.0)(zod@4.6.7))(viem@2.56.9(typescript@7.0.2)(zod@4.6.7))':
     dependencies:
       '@tangle-network/agent-core': 1.0.0
       '@tangle-network/agent-interface': 5.9.0
       '@tangle-network/agent-trace-contract': 2.2.0
       tar-stream: 3.2.1
-      zod: 4.6.6
+      zod: 4.6.7
     optionalDependencies:
-      openai: 6.40.0(ws@8.21.0)(zod@4.5.4)
-      viem: 2.56.9(typescript@7.0.2)(zod@4.5.4)
+      openai: 6.40.0(ws@8.21.0)(zod@4.6.7)
+      viem: 2.56.9(typescript@7.0.2)(zod@4.6.7)
     transitivePeerDependencies:
       - bare-abort-controller
       - bare-buffer
       - react-native-b4a
 
-  '@tangle-network/sandbox@1.0.15(openai@6.40.0(ws@8.22.0)(zod@4.5.4))(viem@2.56.9(typescript@7.0.2)(zod@4.5.4))':
+  '@tangle-network/sandbox@1.0.15(openai@6.40.0(ws@8.22.0)(zod@4.6.7))(viem@2.56.9(typescript@7.0.2)(zod@4.6.7))':
     dependencies:
       '@tangle-network/agent-core': 1.0.0
       '@tangle-network/agent-interface': 5.9.0
       '@tangle-network/agent-trace-contract': 2.2.0
       tar-stream: 3.2.1
-      zod: 4.6.6
+      zod: 4.6.7
     optionalDependencies:
-      openai: 6.40.0(ws@8.22.0)(zod@4.5.4)
-      viem: 2.56.9(typescript@7.0.2)(zod@4.5.4)
+      openai: 6.40.0(ws@8.22.0)(zod@4.6.7)
+      viem: 2.56.9(typescript@7.0.2)(zod@4.6.7)
     transitivePeerDependencies:
       - bare-abort-controller
       - bare-buffer
@@ -2805,10 +2802,10 @@ snapshots:
 
   '@yuku-toolchain/types@0.10.2': {}
 
-  abitype@1.2.3(typescript@7.0.2)(zod@4.5.4):
+  abitype@1.2.3(typescript@7.0.2)(zod@4.6.7):
     optionalDependencies:
       typescript: 7.0.2
-      zod: 4.5.4
+      zod: 4.6.7
 
   aes-js@4.0.0-beta.5: {}
 
@@ -3162,18 +3159,18 @@ snapshots:
 
   obug@3.0.0: {}
 
-  openai@6.40.0(ws@8.21.0)(zod@4.5.4):
+  openai@6.40.0(ws@8.21.0)(zod@4.6.7):
     optionalDependencies:
       ws: 8.21.0
-      zod: 4.5.4
+      zod: 4.6.7
     optional: true
 
-  openai@6.40.0(ws@8.22.0)(zod@4.5.4):
+  openai@6.40.0(ws@8.22.0)(zod@4.6.7):
     optionalDependencies:
       ws: 8.22.0
-      zod: 4.5.4
+      zod: 4.6.7
 
-  ox@0.14.45(typescript@7.0.2)(zod@4.5.4):
+  ox@0.14.45(typescript@7.0.2)(zod@4.6.7):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
       '@noble/ciphers': 1.3.0
@@ -3181,7 +3178,7 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@7.0.2)(zod@4.5.4)
+      abitype: 1.2.3(typescript@7.0.2)(zod@4.6.7)
       eventemitter3: 5.0.1
     optionalDependencies:
       typescript: 7.0.2
@@ -3446,15 +3443,15 @@ snapshots:
 
   verkit@0.4.1: {}
 
-  viem@2.56.9(typescript@7.0.2)(zod@4.5.4):
+  viem@2.56.9(typescript@7.0.2)(zod@4.6.7):
     dependencies:
       '@noble/curves': 1.9.1
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.2.3(typescript@7.0.2)(zod@4.5.4)
+      abitype: 1.2.3(typescript@7.0.2)(zod@4.6.7)
       isows: 1.0.7(ws@8.21.0)
-      ox: 0.14.45(typescript@7.0.2)(zod@4.5.4)
+      ox: 0.14.45(typescript@7.0.2)(zod@4.6.7)
       ws: 8.21.0
     optionalDependencies:
       typescript: 7.0.2
@@ -3552,7 +3549,4 @@ snapshots:
       '@yuku-parser/binding-win32-arm64': 0.10.2
       '@yuku-parser/binding-win32-x64': 0.10.2
 
-  zod@4.5.4:
-    optional: true
-
-  zod@4.6.6: {}
+  zod@4.6.7: {}
