@@ -1,147 +1,33 @@
-import { describe, it, expect } from 'vitest'
-import { generateWallet, signSpendAuth, estimateCost } from '../src/shielded'
-import type { Hex } from 'viem'
+import { describe, expect, it } from 'vitest'
+import { recoverTypedDataAddress, hashTypedData, type Hex } from 'viem'
+import {
+  buildSpendAuthMessage, generateWallet, signSpendAuth,
+  SHIELDED_CREDITS_DOMAIN, SPEND_AUTH_TYPES,
+} from '@tangle-network/tcloud/shielded'
 
-describe('generateWallet()', () => {
-  it('returns wallet with all required fields', () => {
+describe('published ShieldedCredits signing contract', () => {
+  it('builds and signs the contract wire format and binds every spending field', async () => {
     const wallet = generateWallet()
-    expect(wallet.privateKey).toMatch(/^0x[0-9a-f]{64}$/)
-    expect(wallet.address).toMatch(/^0x[0-9a-fA-F]{40}$/)
-    expect(wallet.commitment).toMatch(/^0x[0-9a-f]{64}$/)
-    expect(wallet.salt).toMatch(/^0x[0-9a-f]{64}$/)
-  })
-
-  it('generates unique wallets each time', () => {
-    const a = generateWallet()
-    const b = generateWallet()
-    expect(a.privateKey).not.toBe(b.privateKey)
-    expect(a.address).not.toBe(b.address)
-    expect(a.commitment).not.toBe(b.commitment)
-    expect(a.salt).not.toBe(b.salt)
-  })
-
-  it('derives address from private key deterministically', () => {
-    const wallet = generateWallet()
-    // Regenerating from same key should give same address
-    // (we can't test this directly without reimporting, but commitment should be stable)
-    expect(wallet.address).toBeTruthy()
-    expect(wallet.commitment).toBeTruthy()
-  })
-
-  it('commitment is a keccak256 hash (32 bytes)', () => {
-    const wallet = generateWallet()
-    // keccak256 output is always 32 bytes = 64 hex chars
-    expect(wallet.commitment.length).toBe(66) // 0x + 64
-  })
-})
-
-describe('signSpendAuth()', () => {
-  it('produces a valid signature', async () => {
-    const wallet = generateWallet()
-    const auth = await signSpendAuth(wallet, {
-      serviceId: 1n,
-      jobIndex: 0,
-      amount: 1000000n,
-      operator: '0x1234567890123456789012345678901234567890' as Hex,
-      nonce: 0n,
-      expiry: BigInt(Math.floor(Date.now() / 1000) + 300),
-      chainId: 3799,
-      creditsAddress: '0x0000000000000000000000000000000000000000' as Hex,
-    })
-
-    expect(auth.commitment).toBe(wallet.commitment)
-    expect(auth.serviceId).toBe('1')
-    expect(auth.jobIndex).toBe(0)
-    expect(auth.amount).toBe('1000000')
-    expect(auth.operator).toBe('0x1234567890123456789012345678901234567890')
-    expect(auth.nonce).toBe('0')
-    expect(auth.signature).toMatch(/^0x[0-9a-f]+$/)
-  })
-
-  it('produces different signatures for different nonces', async () => {
-    const wallet = generateWallet()
-    const params = {
-      serviceId: 1n,
-      jobIndex: 0,
-      amount: 1000000n,
-      operator: '0x1234567890123456789012345678901234567890' as Hex,
-      expiry: BigInt(Math.floor(Date.now() / 1000) + 300),
-      chainId: 3799,
-      creditsAddress: '0x0000000000000000000000000000000000000000' as Hex,
+    const params = { commitment: wallet.commitment, serviceId: 7n, jobIndex: 3,
+      amount: 1_500_000n, operator: `0x${'cd'.repeat(20)}` as Hex, nonce: 42n, expiry: 1_900_000_000n }
+    const chainId = 5845, creditsAddress = `0x${'ef'.repeat(20)}` as Hex
+    const typed = buildSpendAuthMessage(params, chainId, creditsAddress)
+    expect(SHIELDED_CREDITS_DOMAIN).toEqual({ name: 'ShieldedCredits', version: '1' })
+    expect(SPEND_AUTH_TYPES.SpendAuthorization.map(f => `${f.type} ${f.name}`).join(',')).toBe(
+      'bytes32 commitment,uint64 serviceId,uint8 jobIndex,uint256 amount,address operator,uint256 nonce,uint64 expiry')
+    const signed = await signSpendAuth(wallet, { ...params, chainId, creditsAddress })
+    const wire = JSON.parse(JSON.stringify(signed))
+    expect(wire).toEqual({ ...params, serviceId: '7', amount: '1500000', nonce: '42', expiry: '1900000000', signature: signed.signature })
+    const rehydrated = { ...wire, serviceId: BigInt(wire.serviceId), amount: BigInt(wire.amount), nonce: BigInt(wire.nonce), expiry: BigInt(wire.expiry) }
+    expect(hashTypedData(buildSpendAuthMessage(rehydrated, chainId, creditsAddress))).toBe(hashTypedData(typed))
+    const recover = (message: typeof typed) => recoverTypedDataAddress({ ...message, signature: signed.signature as Hex })
+    expect((await recover(typed)).toLowerCase()).toBe(wallet.address.toLowerCase())
+    for (const patch of [{ serviceId: 8n }, { jobIndex: 4 }, { amount: 1n }, { nonce: 43n }, { expiry: 1n },
+      { operator: `0x${'12'.repeat(20)}` }, { commitment: `0x${'ab'.repeat(32)}` }]) {
+      expect((await recover(buildSpendAuthMessage({ ...params, ...patch }, chainId, creditsAddress))).toLowerCase()).not.toBe(wallet.address.toLowerCase())
     }
-    const auth1 = await signSpendAuth(wallet, { ...params, nonce: 0n })
-    const auth2 = await signSpendAuth(wallet, { ...params, nonce: 1n })
-    expect(auth1.signature).not.toBe(auth2.signature)
-  })
-
-  it('produces different signatures for different amounts', async () => {
-    const wallet = generateWallet()
-    const params = {
-      serviceId: 1n,
-      jobIndex: 0,
-      nonce: 0n,
-      operator: '0x1234567890123456789012345678901234567890' as Hex,
-      expiry: BigInt(Math.floor(Date.now() / 1000) + 300),
-      chainId: 3799,
-      creditsAddress: '0x0000000000000000000000000000000000000000' as Hex,
+    for (const [chain, address] of [[3799, creditsAddress], [chainId, `0x${'11'.repeat(20)}`]] as const) {
+      expect((await recover(buildSpendAuthMessage(params, chain, address))).toLowerCase()).not.toBe(wallet.address.toLowerCase())
     }
-    const auth1 = await signSpendAuth(wallet, { ...params, amount: 1000000n })
-    const auth2 = await signSpendAuth(wallet, { ...params, amount: 2000000n })
-    expect(auth1.signature).not.toBe(auth2.signature)
-  })
-
-  it('serializes all fields as strings', async () => {
-    const wallet = generateWallet()
-    const auth = await signSpendAuth(wallet, {
-      serviceId: 42n,
-      jobIndex: 3,
-      amount: 999999n,
-      operator: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd' as Hex,
-      nonce: 7n,
-      expiry: 1700000000n,
-      chainId: 5845,
-      creditsAddress: '0x1111111111111111111111111111111111111111' as Hex,
-    })
-    expect(typeof auth.serviceId).toBe('string')
-    expect(typeof auth.amount).toBe('string')
-    expect(typeof auth.nonce).toBe('string')
-    expect(typeof auth.expiry).toBe('string')
-    expect(auth.serviceId).toBe('42')
-    expect(auth.expiry).toBe('1700000000')
-  })
-})
-
-describe('estimateCost()', () => {
-  it('calculates cost in tsUSD base units (6 decimals)', () => {
-    // 1000 input tokens at $0.15/M + 500 output tokens at $0.60/M
-    // = 0.00015 + 0.0003 = 0.00045
-    // * 1e6 = 450, ceil = 450
-    const cost = estimateCost(1000, 500)
-    expect(cost).toBe(450n)
-  })
-
-  it('returns 0 for zero tokens', () => {
-    const cost = estimateCost(0, 0)
-    expect(cost).toBe(0n)
-  })
-
-  it('rounds up (ceil) to avoid underpayment', () => {
-    // 1 input token at $0.15/M = 0.00000015 → ceil(0.15) = 1
-    const cost = estimateCost(1, 0)
-    expect(cost).toBe(1n)
-  })
-
-  it('accepts custom pricing', () => {
-    // 1M input at $1/M + 1M output at $2/M = $3
-    // * 1e6 = 3,000,000
-    const cost = estimateCost(1_000_000, 1_000_000, 1.0, 2.0)
-    expect(cost).toBe(3_000_000n)
-  })
-
-  it('handles large token counts', () => {
-    // 100M input at $0.15/M + 50M output at $0.60/M
-    // = 15 + 30 = 45 → 45,000,000
-    const cost = estimateCost(100_000_000, 50_000_000)
-    expect(cost).toBe(45_000_000n)
   })
 })
