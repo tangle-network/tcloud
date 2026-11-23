@@ -7,7 +7,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['tests/**/*.test.ts'],
+    include: ['tests/**/*.test.ts', 'src/__tests__/decisions.test.ts'],
     exclude: ['tests/**/*.e2e.test.ts'],
   },
 })
