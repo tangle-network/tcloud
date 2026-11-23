@@ -1,6 +1,15 @@
 /**
  * Core HTTP client for Tangle AI Cloud.
  * Shared between CLI and SDK.
+ *
+ * This module owns configuration, metering, retry/timeout, the shared
+ * request helpers and chat/ask/models. Service groups live beside it and
+ * receive the helpers through a {@link ClientContext}:
+ *   - `client-keys.ts`      billing, API keys, projects, user info
+ *   - `client-media.ts`     embeddings, images, audio, fine-tuning, batch, video/avatar jobs
+ *   - `client-search.ts`    rerank, search, research, vector stores / RAG
+ *   - `client-decisions.ts` decisions, System One, key scope
+ * Each public method stays declared here so the class surface is unchanged.
  */
 
 import type {
@@ -19,7 +28,6 @@ import type {
   SpendAuth,
   EmbeddingOptions,
   EmbeddingResponse,
-  ImageEditAttachment,
   ImageEditOptions,
   ImageGenerateOptions,
   ImageResponse,
@@ -51,36 +59,21 @@ import type {
 import { PrivateRouter, type OperatorInfo, type RoutingStrategy } from './private-router'
 import { packageVersion } from './version'
 import {
-  deriveChildBudgetUsd,
   resolveModelWithinAllowList,
   type DecisionCreateOptions,
-  type DecisionResponse,
   type DecisionResult,
-  type DecisionReceipts,
   type KeyScopeInfo,
   type ModelWithinAllowListResolution,
   type SystemOneEvaluateOptions,
   type SystemOneResult,
-  type SystemOneResultBody,
 } from './decisions'
+import { TCloudError, proxiedFetch, type ClientContext } from './client-core'
+import * as keysApi from './client-keys'
+import * as mediaApi from './client-media'
+import * as searchApi from './client-search'
+import * as decisionsApi from './client-decisions'
 
-/** Cost + identity receipts off a decision-surface response. */
-function receiptsFrom(res: Response): DecisionReceipts {
-  const num = (name: string): number | null => {
-    const raw = res.headers.get(name)
-    if (raw === null) return null
-    const parsed = Number(raw)
-    return Number.isFinite(parsed) ? parsed : null
-  }
-  return {
-    generationId: res.headers.get('X-Generation-Id'),
-    servedModel: res.headers.get('X-Tangle-Served-Model'),
-    costUsd: num('X-Tangle-Cost-USD'),
-    providerCostUsd: num('X-Tangle-Provider-Cost-USD'),
-    maxCostUsd: num('X-Tangle-Max-Cost-USD'),
-    replayed: res.headers.get('X-Idempotent-Replay') === 'true',
-  }
-}
+export { TCloudError }
 
 
 /** Non-enumerable marker set on clients constructed via {@link TCloudClient.rotating}. */
@@ -123,46 +116,6 @@ export interface RotationStats {
 
 const DEFAULT_BASE_URL = 'https://router.tangle.tools/v1'
 
-/**
- * Route a fetch call through the configured privacy proxy.
- * - direct: standard fetch
- * - relayer: POST to relayer's /relay/proxy or /relay/proxy-stream
- */
-async function proxiedFetch(
-  privacy: PrivacyConfig | undefined,
-  url: string,
-  init: RequestInit,
-  streaming: boolean,
-): Promise<Response> {
-  if (!privacy || privacy.mode === 'direct') {
-    return fetch(url, init)
-  }
-
-  if (privacy.mode !== 'relayer') {
-    throw new Error(`Unsupported privacy mode: ${String(privacy.mode)}`)
-  }
-  if (!privacy.relayerUrl) {
-    throw new Error('relayerUrl is required when privacy mode is "relayer"')
-  }
-  const proxyPath = streaming ? '/relay/proxy-stream' : '/relay/proxy'
-  const headers: Record<string, string> = {}
-  if (init.headers) {
-    const entries = init.headers instanceof Headers
-      ? Array.from(init.headers.entries())
-      : Object.entries(init.headers as Record<string, string>)
-    for (const [key, value] of entries) headers[key] = value
-  }
-  return fetch(`${privacy.relayerUrl}${proxyPath}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal: init.signal,
-    body: JSON.stringify({
-      target: url,
-      body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body,
-      headers,
-    }),
-  })
-}
 
 /** A retry wait owned by the SDK, cancellable without leaving a timer behind. */
 function retryDelay(ms: number, signal?: AbortSignal | null): Promise<void> {
@@ -260,6 +213,26 @@ export class TCloudClient {
   private _cachedOperators: OperatorInfo[] = []
   private _operatorsCachedAt = 0
   private static readonly OPERATORS_TTL_MS = 5 * 60 * 1000
+
+  /** The helpers handed to the service-group modules (see client-core.ts). */
+  private readonly _ctx: ClientContext = this._createContext()
+
+  private _createContext(): ClientContext {
+    const client = this
+    return {
+      get baseURL() { return client.baseURL },
+      get platformURL() { return client.platformURL },
+      get apiRoot() { return client._apiRoot },
+      get headers() { return client.headers },
+      get privacy() { return client.privacy },
+      checkLimits: () => client.checkLimits(),
+      countRequest: () => { client._requestCount++ },
+      request: <T>(url: string, init?: RequestInit & { method?: string }) => client._request<T>(url, init),
+      fetch: <T>(url: string, init?: RequestInit & { method?: string }) => client._fetch<T>(url, init),
+      requestRaw: (url: string, init?: RequestInit & { method?: string }) => client._requestRaw(url, init),
+      requestWithResponse: (url: string, init?: RequestInit & { method?: string }) => client._requestWithResponse(url, init),
+    }
+  }
 
   /**
    * Build a client pointed directly at a cli-bridge instance — skips the
@@ -891,36 +864,19 @@ export class TCloudClient {
 
   /** Get credit balance */
   async credits(): Promise<CreditBalance> {
-    const { data } = await this._fetch<{ data: CreditBalance }>(`${this.platformURL}/v1/billing/balance`)
-    return data
+    return keysApi.credits(this._ctx)
   }
 
   /** Add credits via Stripe checkout. Returns the checkout URL. */
   async addCredits(amount: number): Promise<{ url: string }> {
-    const { data } = await this._fetch<{ data: { url: string } }>(`${this.platformURL}/v1/billing/topup`, {
-      method: 'POST',
-      body: JSON.stringify({ amount }),
-    })
-    return data
+    return keysApi.addCredits(this._ctx, amount)
   }
 
   /** Get transaction history */
   async transactions(limit = 50): Promise<{ id: string; amount: number; type: string; product: string | null; description: string | null; createdAt: string }[]> {
-    const { data } = await this._fetch<{ data: { id: string; amount: number; type: string; product: string | null; description: string | null; createdAt: string }[] }>(`${this.platformURL}/v1/billing/transactions?limit=${limit}`)
-    return data
+    return keysApi.transactions(this._ctx, limit)
   }
 
-  // ── API Keys (via id.tangle.tools) ──
-
-  /**
-   * Create a new API key.
-   * When called with an API key (not session), the new key is automatically
-   * a child of the calling key — enabling hierarchical key delegation.
-   *
-   * Pass `parentKeyId` explicitly to create a child of a specific key.
-   * Child keys inherit the parent's product scope, allowedModels, and rpmLimit
-   * if not specified. Budget cannot exceed the parent's remaining budget.
-   */
   // ── Decision surfaces + key scope ──
   //
   // Two wires, one job (see src/decisions.ts): /v1/decisions is OpenAI's
@@ -930,50 +886,12 @@ export class TCloudClient {
 
   /** The OpenAI Decisions wire, natively: `client.decisions.create(...)`. */
   readonly decisions = {
-    create: (options: DecisionCreateOptions): Promise<DecisionResult> => this._decisionsCreate(options),
-  }
-
-  private async _decisionsCreate(options: DecisionCreateOptions): Promise<DecisionResult> {
-    const headers: Record<string, string> = {}
-    if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey
-    if (options.maxCostUsd !== undefined) headers['X-Tangle-Max-Cost-USD'] = String(options.maxCostUsd)
-    // Verbatim pass-through: only the model rides as a first-class field —
-    // every OpenAI extension (prompt cache, safety id, item inputs) keeps
-    // its native shape end to end.
-    const body: Record<string, unknown> = {
-      model: options.model,
-      input: options.input,
-      questions: options.questions,
-      ...(options.safetyIdentifier !== undefined ? { safety_identifier: options.safetyIdentifier } : {}),
-      ...(options.promptCacheKey !== undefined ? { prompt_cache_key: options.promptCacheKey } : {}),
-    }
-    const res = await this._requestWithResponse(`${this.baseURL}/decisions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      signal: options.signal,
-    })
-    const decision = await res.json() as DecisionResponse
-    return { decision, receipts: receiptsFrom(res) }
+    create: (options: DecisionCreateOptions): Promise<DecisionResult> => decisionsApi.createDecision(this._ctx, options),
   }
 
   /** The System One wire (fleet judges): state + named questions, answers by name. */
   async systemone(options: SystemOneEvaluateOptions): Promise<SystemOneResult> {
-    const headers: Record<string, string> = {}
-    if (options.idempotencyKey) headers['Idempotency-Key'] = options.idempotencyKey
-    if (options.maxCostUsd !== undefined) headers['X-Tangle-Max-Cost-USD'] = String(options.maxCostUsd)
-    const res = await this._requestWithResponse(`${this.baseURL}/systemone`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: options.model,
-        state: options.state,
-        questions: options.questions,
-      }),
-      signal: options.signal,
-    })
-    const result = await res.json() as SystemOneResultBody
-    return { result, receipts: receiptsFrom(res) }
+    return decisionsApi.systemone(this._ctx, options)
   }
 
   /**
@@ -982,28 +900,10 @@ export class TCloudClient {
    * callers route within `allowedModels` BEFORE a first refusal.
    */
   async keyInfo(): Promise<KeyScopeInfo> {
-    const raw = await this._fetch<{ data: Record<string, unknown> }>(`${this.baseURL}/key`)
-    const data = raw?.data ?? {}
-    const allowed = data.allowed_models
-    const usage = (data.usage ?? {}) as Record<string, unknown>
-    const monthly = Number(usage.monthly ?? 0)
-    const remaining = typeof data.limit_remaining === 'number' ? data.limit_remaining : null
-    return {
-      allowedModels: Array.isArray(allowed) && allowed.length > 0 ? (allowed as string[]) : null,
-      limit: typeof data.limit === 'number' ? data.limit : null,
-      limitRemaining: remaining,
-      limitReset: data.limit_reset === 'monthly' ? 'monthly' : null,
-      rateLimitRequests: typeof data.rate_limit === 'object' && data.rate_limit !== null
-        ? typeof (data.rate_limit as { requests?: unknown }).requests === 'number'
-          ? (data.rate_limit as { requests: number }).requests
-          : null
-        : null,
-      expiresAt: typeof data.expires_at === 'string' ? data.expires_at : null,
-    }
+    return decisionsApi.keyInfo(this._ctx)
   }
 
-  private _allowedModelsCache: { models: string[] | null; at: number } | null = null
-  private static readonly ALLOWED_MODELS_TTL_MS = 5 * 60_000
+  private readonly _allowedModels = new decisionsApi.AllowedModelsCache()
 
   /**
    * The key's model allow-list (null when unscoped), cached five minutes.
@@ -1011,13 +911,7 @@ export class TCloudClient {
    * land here first.
    */
   async allowedModels(options: { refresh?: boolean } = {}): Promise<string[] | null> {
-    const now = Date.now()
-    if (!options.refresh && this._allowedModelsCache && now - this._allowedModelsCache.at < TCloudClient.ALLOWED_MODELS_TTL_MS) {
-      return this._allowedModelsCache.models
-    }
-    const info = await this.keyInfo()
-    this._allowedModelsCache = { models: info.allowedModels, at: now }
-    return info.allowedModels
+    return this._allowedModels.get(() => this.keyInfo(), options.refresh)
   }
 
   /**
@@ -1032,30 +926,24 @@ export class TCloudClient {
     return resolveModelWithinAllowList({ requested, allowedModels, fallbacks: options.fallbacks })
   }
 
+  // ── API Keys (via id.tangle.tools) ──
+
+  /**
+   * Create a new API key.
+   * When called with an API key (not session), the new key is automatically
+   * a child of the calling key — enabling hierarchical key delegation.
+   *
+   * Pass `parentKeyId` explicitly to create a child of a specific key.
+   * Child keys inherit the parent's product scope, allowedModels, and rpmLimit
+   * if not specified. Budget cannot exceed the parent's remaining budget.
+   */
   async createKey(opts: CreateKeyOptions): Promise<CreatedKey> {
-    // The platform reserves a child's budget against its parent's REMAINING;
-    // an ask above it is refused outright. When the caller reports the
-    // parent's remaining, derive the ask (never above it, never below the
-    // platform minimum) instead of sending a flat default.
-    const body: CreateKeyOptions & { budgetUsd?: number } = { ...opts }
-    if (opts.parentBudgetRemainingUsd !== undefined) {
-      body.budgetUsd = opts.budgetUsd !== undefined
-        ? deriveChildBudgetUsd({ requestedUsd: opts.budgetUsd, parentRemainingUsd: opts.parentBudgetRemainingUsd })
-        : undefined
-      delete (body as { parentBudgetRemainingUsd?: number }).parentBudgetRemainingUsd
-      if (body.budgetUsd === undefined) delete body.budgetUsd
-    }
-    const { data } = await this._fetch<{ data: CreatedKey }>(`${this.platformURL}/v1/keys`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    })
-    return data
+    return keysApi.createKey(this._ctx, opts)
   }
 
   /** Get a single API key by ID */
   async getKey(id: string): Promise<ApiKeyInfo> {
-    const { data } = await this._fetch<{ data: ApiKeyInfo }>(`${this.platformURL}/v1/keys/${id}`)
-    return data
+    return keysApi.getKey(this._ctx, id)
   }
 
   /**
@@ -1063,9 +951,7 @@ export class TCloudClient {
    * Pass `children: true` to list child keys of the calling API key.
    */
   async keys(opts?: { children?: boolean }): Promise<ApiKeyInfo[]> {
-    const q = opts?.children ? '?children=true' : ''
-    const { data } = await this._fetch<{ data: ApiKeyInfo[] }>(`${this.platformURL}/v1/keys${q}`)
-    return data
+    return keysApi.keys(this._ctx, opts)
   }
 
   /**
@@ -1073,65 +959,39 @@ export class TCloudClient {
    * Can adjust budget, allowedModels, rpmLimit, expiresAt, and name.
    */
   async updateKey(id: string, updates: UpdateKeyOptions): Promise<ApiKeyInfo> {
-    const { data } = await this._fetch<{ data: ApiKeyInfo }>(`${this.platformURL}/v1/keys/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(updates),
-    })
-    return data
+    return keysApi.updateKey(this._ctx, id, updates)
   }
 
   /** Revoke an API key. If the key has children, they are also revoked recursively. */
   async revokeKey(id: string): Promise<void> {
-    await this._fetch(`${this.platformURL}/v1/keys/${id}`, { method: 'DELETE' })
+    return keysApi.revokeKey(this._ctx, id)
   }
 
   /** Rotate an API key — creates new key with same config, revokes old */
   async rotateKey(id: string): Promise<{ newKey: CreatedKey; revokedKeyId: string }> {
-    const { data } = await this._fetch<{ data: { newKey: CreatedKey; revokedKeyId: string } }>(`${this.platformURL}/v1/keys/${id}/rotate`, { method: 'POST' })
-    return data
+    return keysApi.rotateKey(this._ctx, id)
   }
 
   // ── Projects (via id.tangle.tools) ──
 
   /** Create a project for usage attribution */
   async createProject(name: string, product?: string): Promise<{ id: string; name: string }> {
-    const { data } = await this._fetch<{ data: { id: string; name: string } }>(`${this.platformURL}/v1/projects`, {
-      method: 'POST',
-      body: JSON.stringify({ name, product }),
-    })
-    return data
+    return keysApi.createProject(this._ctx, name, product)
   }
 
   /** List projects */
   async projects(): Promise<{ id: string; name: string; product: string | null; createdAt: string }[]> {
-    const { data } = await this._fetch<{ data: { id: string; name: string; product: string | null; createdAt: string }[] }>(`${this.platformURL}/v1/projects`)
-    return data
+    return keysApi.projects(this._ctx)
   }
 
   /** Generate embeddings */
   async embeddings(options: EmbeddingOptions): Promise<EmbeddingResponse> {
-    return this._request(`${this.baseURL}/embeddings`, {
-      method: 'POST',
-      body: JSON.stringify({
-        model: options.model || 'text-embedding-3-small',
-        input: options.input,
-      }),
-    })
+    return mediaApi.embeddings(this._ctx, options)
   }
 
   /** Generate images */
   async imageGenerate(options: ImageGenerateOptions): Promise<ImageResponse> {
-    return this._request(`${this.baseURL}/images/generations`, {
-      method: 'POST',
-      body: JSON.stringify({
-        model: options.model || 'dall-e-3',
-        prompt: options.prompt,
-        n: options.n,
-        size: options.size,
-        quality: options.quality,
-        response_format: options.response_format,
-      }),
-    })
+    return mediaApi.imageGenerate(this._ctx, options)
   }
 
   /**
@@ -1146,73 +1006,17 @@ export class TCloudClient {
    * first image is honored upstream.
    */
   async imagesEdit(options: ImageEditOptions): Promise<ImageResponse> {
-    const formData = new FormData()
-    formData.append('prompt', options.prompt)
-    formData.append('model', options.model || 'gpt-image-2')
-    if (options.n != null) formData.append('n', String(options.n))
-    if (options.size) formData.append('size', options.size)
-    if (options.quality) formData.append('quality', options.quality)
-    if (options.response_format) formData.append('response_format', options.response_format)
-    if (options.mask) formData.append('mask', toEditBlob(options.mask, 'mask.png'), 'mask.png')
-
-    const images = Array.isArray(options.image) ? options.image : [options.image]
-    if (images.length === 0) {
-      throw new TCloudError(400, 'imagesEdit requires at least one image attachment')
-    }
-    // Each upstream takes the field name differently — `image` for a
-    // single-image variant (dall-e-2) and `image[]` for multi-image
-    // composition (gpt-image-2). We always send `image[]`; upstream
-    // implementations of the OpenAI shape accept both.
-    images.forEach((img, idx) => {
-      const blob = toEditBlob(img, `image-${idx + 1}.png`)
-      formData.append('image[]', blob, blobFilename(img, `image-${idx + 1}.png`))
-    })
-
-    const headers = { ...this.headers }
-    delete headers['Content-Type'] // let FormData set the boundary
-
-    this.checkLimits()
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/images/edits`, {
-      method: 'POST',
-      headers,
-      body: formData as unknown as BodyInit,
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
-    }
-    this._requestCount++
-    return res.json()
+    return mediaApi.imagesEdit(this._ctx, options)
   }
 
   /** Rerank documents by relevance to a query */
   async rerank(options: RerankOptions): Promise<RerankResponse> {
-    return this._request(`${this.baseURL}/rerank`, {
-      method: 'POST',
-      body: JSON.stringify({
-        model: options.model || 'rerank-english-v3.0',
-        query: options.query,
-        documents: options.documents,
-        top_n: options.top_n,
-      }),
-    })
+    return searchApi.rerank(this._ctx, options)
   }
 
   /** Search the web through Tangle Router billing and provider routing. */
   async search(options: SearchOptions): Promise<SearchResponse> {
-    return this._request(`${this.baseURL}/search`, {
-      method: 'POST',
-      signal: options.signal,
-      body: JSON.stringify({
-        query: options.query,
-        provider: options.provider,
-        model: options.model,
-        maxResults: options.maxResults,
-        searchRecency: options.searchRecency,
-        includeDomains: options.includeDomains,
-        excludeDomains: options.excludeDomains,
-      }),
-    })
+    return searchApi.search(this._ctx, options)
   }
 
   /** Run a multi-step deep-research task through Tangle Router billing and
@@ -1220,33 +1024,12 @@ export class TCloudClient {
    *  the provider synthesizes an answer over many fetches. Pick depth with
    *  `effort` (provider-specific vocabulary; see {@link ResearchOptions.effort}). */
   async research(options: ResearchOptions): Promise<ResearchResponse> {
-    return this._request(`${this.baseURL}/research`, {
-      method: 'POST',
-      body: JSON.stringify({
-        query: options.query,
-        provider: options.provider,
-        model: options.model,
-        effort: options.effort,
-        maxResults: options.maxResults,
-        searchRecency: options.searchRecency,
-        includeDomains: options.includeDomains,
-        excludeDomains: options.excludeDomains,
-        outputSchema: options.outputSchema,
-      }),
-    })
+    return searchApi.research(this._ctx, options)
   }
 
   /** Text-to-speech */
   async speech(options: { model?: string; input: string; voice?: string }): Promise<ArrayBuffer> {
-    const res = await this._requestRaw(`${this.baseURL}/audio/speech`, {
-      method: 'POST',
-      body: JSON.stringify({
-        model: options.model || 'tts-1',
-        input: options.input,
-        voice: options.voice || 'alloy',
-      }),
-    })
-    return res.arrayBuffer()
+    return mediaApi.speech(this._ctx, options)
   }
 
   /** Legacy completions endpoint */
@@ -1266,99 +1049,56 @@ export class TCloudClient {
 
   /** Audio transcription (speech-to-text) */
   async transcribe(file: Blob, options?: { model?: string; language?: string; prompt?: string }): Promise<TranscriptionResponse> {
-    const formData = new FormData()
-    formData.append('file', file, 'audio.webm')
-    formData.append('model', options?.model || 'whisper-1')
-    if (options?.language) formData.append('language', options.language)
-    if (options?.prompt) formData.append('prompt', options.prompt)
-
-    const headers = { ...this.headers }
-    delete headers['Content-Type'] // let FormData set it
-
-    this.checkLimits()
-    const res = await proxiedFetch(this.privacy, `${this.baseURL}/audio/transcriptions`, {
-      method: 'POST',
-      headers,
-      body: formData as any,
-    }, false)
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }))
-      throw new TCloudError(res.status, err.error?.message || err.error || err.message || res.statusText)
-    }
-    this._requestCount++
-    return res.json()
+    return mediaApi.transcribe(this._ctx, file, options)
   }
 
   /** Create a fine-tuning job */
   async fineTuneCreate(options: FineTuningJobOptions): Promise<FineTuningJob> {
-    return this._request(`${this.baseURL}/fine_tuning/jobs`, {
-      method: 'POST',
-      body: JSON.stringify(options),
-    })
+    return mediaApi.fineTuneCreate(this._ctx, options)
   }
 
   /** List fine-tuning jobs */
   async fineTuneList(): Promise<{ data: FineTuningJob[] }> {
-    return this._fetch(`${this.baseURL}/fine_tuning/jobs`)
+    return mediaApi.fineTuneList(this._ctx)
   }
 
   /** Submit a batch of chat requests */
   async batch(requests: BatchRequest[]): Promise<BatchJobResponse> {
-    return this._request(`${this.baseURL}/batch`, {
-      method: 'POST',
-      body: JSON.stringify({ requests }),
-    })
+    return mediaApi.batch(this._ctx, requests)
   }
 
   /** Get batch job status */
   async batchStatus(jobId: string): Promise<BatchJobResponse> {
-    return this._fetch(`${this.baseURL}/batch?id=${jobId}`)
+    return mediaApi.batchStatus(this._ctx, jobId)
   }
 
   /** Generate video */
   async videoGenerate(options: VideoGenerateOptions): Promise<VideoResponse> {
-    return this._request(`${this.baseURL}/videos`, {
-      method: 'POST',
-      body: JSON.stringify(options),
-    })
+    return mediaApi.videoGenerate(this._ctx, options)
   }
 
   /** Get video generation status */
   async videoStatus(id: string): Promise<VideoResponse> {
-    return this._fetch(`${this.baseURL}/videos/${encodeURIComponent(id)}`)
+    return mediaApi.videoStatus(this._ctx, id)
   }
 
   /** Generate an avatar video (lip-synced talking head from audio + face image).
    *  Returns 202 with a job_id for async polling via avatarJobStatus(). */
   async avatarGenerate(options: AvatarGenerateRequest): Promise<AvatarGenerateResponse> {
-    return this._request(`${this.baseURL}/avatar/generate`, {
-      method: 'POST',
-      body: JSON.stringify(options),
-    })
+    return mediaApi.avatarGenerate(this._ctx, options)
   }
 
   /** Poll an avatar generation job by ID. */
   async avatarJobStatus(jobId: string): Promise<AvatarJobStatus> {
-    return this._fetch(`${this.baseURL}/avatar/jobs/${jobId}`)
+    return mediaApi.avatarJobStatus(this._ctx, jobId)
   }
 
   /** Poll an avatar job until it reaches a terminal state (completed/failed).
    *  Returns the final job status. Throws on failure. */
   async pollAvatarJob(jobId: string, options?: { intervalMs?: number; timeoutMs?: number }): Promise<AvatarJobStatus> {
-    const interval = options?.intervalMs ?? 5000
-    const timeout = options?.timeoutMs ?? 300_000
-    const deadline = Date.now() + timeout
-
-    while (Date.now() < deadline) {
-      const job = await this.avatarJobStatus(jobId)
-      if (job.status === 'completed') return job
-      if (job.status === 'failed') {
-        throw new TCloudError(500, job.error || `Avatar job ${jobId} failed`)
-      }
-      await new Promise(r => setTimeout(r, interval))
-    }
-    throw new TCloudError(408, `Avatar job ${jobId} timed out after ${timeout}ms`)
+    return mediaApi.pollAvatarJob(this._ctx, jobId, options)
   }
+
 
   /**
    * Watch an async job via SSE until it reaches a terminal state.
@@ -1369,85 +1109,7 @@ export class TCloudClient {
    * @returns The final JobEvent (completed/failed/cancelled)
    */
   async watchJob(jobId: string, options?: WatchJobOptions): Promise<JobEvent> {
-    const base = options?.operatorUrl?.replace(/\/$/, '') || this.baseURL
-    const url = `${base}/v1/jobs/${encodeURIComponent(jobId)}/events`
-    const timeout = options?.timeout ?? 300_000
-
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), timeout)
-
-    try {
-      const watchHeaders: Record<string, string> = {
-        ...this.headers,
-        Accept: 'text/event-stream',
-      }
-      // When connecting to an operator URL, don't leak the API key.
-      // The job ID itself is the capability token for operator auth.
-      if (options?.operatorUrl) {
-        delete watchHeaders['Authorization']
-      }
-      // SSE token overrides any existing Authorization header
-      if (options?.sseToken) {
-        watchHeaders['Authorization'] = `Bearer ${options.sseToken}`
-      }
-
-      const res = await proxiedFetch(this.privacy, url, {
-        headers: watchHeaders,
-        signal: controller.signal,
-      }, true)
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }))
-        throw new TCloudError(res.status, err.error?.message || err.error || res.statusText)
-      }
-
-      const reader = res.body!.getReader()
-      const decoder = new TextDecoder()
-      let buf = ''
-      const terminalStatuses = new Set(['completed', 'failed', 'cancelled'])
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) {
-          throw new TCloudError(502, `SSE stream ended without terminal event for job ${jobId}`)
-        }
-        buf += decoder.decode(value, { stream: true })
-        if (buf.length > 1_048_576) throw new TCloudError(502, 'SSE buffer overflow — server sent >1MB without newline')
-
-        const lines = buf.split('\n')
-        buf = lines.pop() || ''
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const data = line.slice(6).trim()
-          if (!data || data === '[DONE]') continue
-
-          let event: JobEvent
-          try {
-            event = JSON.parse(data) as JobEvent
-          } catch {
-            continue
-          }
-
-          try {
-            options?.onEvent?.(event)
-          } catch (cbErr) {
-            console.error('watchJob onEvent callback error:', cbErr)
-          }
-
-          if (terminalStatuses.has(event.status)) {
-            return event
-          }
-        }
-      }
-    } catch (err: any) {
-      if (err?.name === 'AbortError') {
-        throw new TCloudError(408, `Job ${jobId} timed out after ${timeout}ms`)
-      }
-      throw err
-    } finally {
-      clearTimeout(timer)
-    }
+    return mediaApi.watchJob(this._ctx, jobId, options)
   }
 
   // ---------------------------------------------------------------------------
@@ -1456,39 +1118,27 @@ export class TCloudClient {
 
   /** Create a vector collection on the operator's vector store */
   async createCollection(options: { name: string; dimensions: number; distance_metric?: string }): Promise<any> {
-    return this._request(`${this.baseURL}/collections`, {
-      method: 'POST',
-      body: JSON.stringify(options),
-    })
+    return searchApi.createCollection(this._ctx, options)
   }
 
   /** List collections on the operator's vector store */
   async listCollections(): Promise<any> {
-    return this._fetch(`${this.baseURL}/collections`)
+    return searchApi.listCollections(this._ctx)
   }
 
   /** Upsert vectors into a collection */
   async upsertVectors(collection: string, vectors: Array<{ id: string; vector: number[]; metadata?: Record<string, any> }>): Promise<any> {
-    return this._request(`${this.baseURL}/collections/${encodeURIComponent(collection)}/upsert`, {
-      method: 'POST',
-      body: JSON.stringify({ vectors }),
-    })
+    return searchApi.upsertVectors(this._ctx, collection, vectors)
   }
 
   /** Similarity search in a collection */
   async queryVectors(collection: string, options: { vector: number[]; top_k?: number; filter?: Record<string, any> }): Promise<any> {
-    return this._request(`${this.baseURL}/collections/${encodeURIComponent(collection)}/query`, {
-      method: 'POST',
-      body: JSON.stringify(options),
-    })
+    return searchApi.queryVectors(this._ctx, collection, options)
   }
 
   /** RAG query — embed text + search collection in one call */
   async ragQuery(options: { query: string; collection: string; top_k?: number; embedding_model?: string }): Promise<any> {
-    return this._request(`${this.baseURL}/rag`, {
-      method: 'POST',
-      body: JSON.stringify(options),
-    })
+    return searchApi.ragQuery(this._ctx, options)
   }
 
   /** Search models by name, provider, or capability */
@@ -1641,7 +1291,7 @@ export class TCloudClient {
   // ── User Info ────────────────────────────────────────────────────────
 
   async userInfo(): Promise<{ user: { id: string; email: string; name?: string }; balance: number; subscription: { plan: string; status: string } | null; usage: Record<string, { cost: number; count: number }> }> {
-    return this._fetch(`${this._apiRoot}/api/auth/userinfo`)
+    return keysApi.userInfo(this._ctx)
   }
 
 }
@@ -1762,51 +1412,6 @@ function formatPrice(pricePerToken: number): string {
   return `$${(pricePerToken * 1000).toFixed(6)}/1K tokens`
 }
 
-/**
- * Normalize the polymorphic `ImageEditAttachment` to a `Blob` for
- * multipart FormData submission. Base64 inputs are decoded; raw
- * ArrayBuffers are wrapped with a sensible default media type (PNG).
- */
-function toEditBlob(input: ImageEditAttachment, defaultFilename: string): Blob {
-  if (input instanceof Blob) return input
-  if (input instanceof ArrayBuffer) return new Blob([input], { type: 'image/png' })
-  // {data: base64, mediaType, filename?}
-  const binary = base64ToUint8Array(input.data)
-  // `Uint8Array` is a valid BlobPart at the JS level. TS's narrower
-  // `BodyInit` shape complains about the `ArrayBufferLike` generic in
-  // some lib targets — copy to a fresh ArrayBuffer-backed view so the
-  // type is unambiguous.
-  const copy = new Uint8Array(binary.byteLength)
-  copy.set(binary)
-  return new Blob([copy.buffer], { type: input.mediaType || 'image/png' })
-  void defaultFilename // referenced by blobFilename
-}
-
-/** Extract a stable filename for the upload (multipart needs one;
- *  upstream sometimes uses extension to sniff the format). */
-function blobFilename(input: ImageEditAttachment, fallback: string): string {
-  if (typeof input === 'object' && !(input instanceof Blob) && !(input instanceof ArrayBuffer)) {
-    if (input.filename) return input.filename
-  }
-  return fallback
-}
-
-function base64ToUint8Array(b64: string): Uint8Array {
-  // Strip data:URL prefix if present.
-  const m = /^data:[^;,]*(?:;[^,]*)?,(.+)$/.exec(b64)
-  const raw = m ? m[1] : b64
-  // Node 18+ and modern browsers expose `atob`; on older Node `Buffer.from`
-  // is the canonical decoder.
-  const bin =
-    typeof atob === 'function'
-      ? atob(raw)
-      : // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (globalThis as any).Buffer.from(raw, 'base64').toString('binary')
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
-}
-
 export interface TierConfig {
   name: string
   cpu: number
@@ -1830,11 +1435,4 @@ export interface PricingTier {
   availableOperators: number
   /** Operators that also serve the requested model at a listed price */
   operatorsWithModel: number
-}
-
-export class TCloudError extends Error {
-  constructor(public status: number, message: string) {
-    super(message)
-    this.name = 'TCloudError'
-  }
 }
